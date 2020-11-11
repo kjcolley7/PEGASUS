@@ -1,0 +1,76 @@
+/*
+int read_line(char* buffer, size_t size) {
+	int value;
+	int bytes_read = 0;
+	
+	while(bytes_read < size && (value = port_read(stdio)) >= 0) {
+		++bytes_read;
+		
+		if(value != '\n') {
+			value |= 0x80;
+		}
+		
+		*buffer++ = value;
+		
+		if(value == '\n') {
+			break;
+		}
+	}
+	
+	if(value < 0) {
+		return value;
+	}
+	
+	return bytes_read;
+}
+*/
+
+
+// R2 = buffer
+// R3 = size
+// R4 = bytes_read
+// R5 = value
+// R6 = 0x0A
+// R7 = 0x80
+.scope
+.export @read_line
+@read_line:
+	// bytes_read = 0;
+	MOV   R4, ZERO
+	MOV   R6, 0x0A
+	MOV   R7, 0x80
+	BRR   @.while_cond
+	
+@.while_body:
+	// ++bytes_read;
+	INC    R4
+	// if(value != '\n')
+	CMP    R5, R6
+	//     value |= 0x80;
+	ORR.NE R5, R7
+	// *buffer = value;
+	STB    [R2], R5
+	// ++buffer;
+	INC    R2
+	// if(value == '\n')
+	CMP    R5, R6
+	//     break;
+	BRR.EQ @.while_after
+	
+@.while_cond:
+	// while(bytes_read < size ...
+	CMP    R4, R3
+	BRR.GE @.while_after
+	//       ... && (value = port_read(portnum)) >= 0)
+	RDB    R5
+	BRR.CC @.while_body
+	// if(value < 0) return value;
+	MOV    RV, R5
+	BRR    @.return
+	
+@.while_after:
+	// return bytes_read;
+	MOV    RV, R4
+	
+@.return:
+	RET

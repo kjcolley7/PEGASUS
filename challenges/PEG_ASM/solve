@@ -1,0 +1,4 @@
+#!/bin/bash
+
+# Running the challenge binary just prints out the flag directly
+runpeg example_asm.peg

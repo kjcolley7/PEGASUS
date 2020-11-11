@@ -1,0 +1,121 @@
+//------------------------------------------------
+//--- 010 Editor v8.0.1 Binary Template
+//
+//      File: 
+//   Authors: 
+//   Version: 
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+
+typedef struct (int size) {
+    char length_encoded[size] <open=false>;
+} lestring <size=sizeof_lestring, read=show_lestring, bgcolor=0x0080ff, open=false>;
+
+int sizeof_lestring(lestring& les) {
+    local int size = 0;
+    while(ReadUByte(startof(les) + size) & 0x80) {
+        ++size;
+    }
+    ++size;
+    return size;
+}
+
+string show_lestring(lestring& les) {
+    local string decoded = "";
+    local ubyte c;
+    local char tmp[1];
+    
+    local int i = 0;
+    while((c = ReadUByte(startof(les) + i)) & 0x80) {
+        tmp[0] = c & ~0x80;
+        decoded += tmp;
+        ++i;
+    }
+    
+    tmp[0] = c;
+    decoded += tmp;
+    return decoded;
+}
+
+typedef struct (uint16 cmdsize) {
+    lestring name(cmdsize - (4 + 2 + 2 + 2 + 2 + 1));
+    ubyte vppn;
+    ubyte vpage_count;
+    uint16 foff;
+    uint16 fsize;
+    ubyte prot;
+
+    if(fsize > 0) {
+        local int64 pos = FTell();
+        FSeek(foff);
+        byte data[fsize] <bgcolor=cLtPurple, open=false>;
+        FSeek(pos);
+    }
+} Pegasus_Segment <open=true>;
+
+typedef struct (uint16 cmdsize) {
+    uint16 RV, R3, R4, R5, R6, R7;
+    uint16 PC <bgcolor=cRed>;
+    uint16 DPC <bgcolor=cAqua>;
+} Pegasus_Entrypoint <open=true>;
+
+typedef struct {
+    lestring name;
+    uint16 value;
+} Pegasus_Symbol <open=true>;
+
+typedef struct (uint16 cmdsize) {
+    uint16 sym_count;
+    Pegasus_Symbol syms[sym_count] <optimize=false, open=true>;
+} Pegasus_SymbolTable <open=true>;
+
+typedef struct {
+    uint16 symbol_index;
+    uint16 fileoff;
+} Pegasus_Relocation <open=true>;
+
+typedef struct (uint16 cmdsize) {
+    uint16 reloc_count;
+    Pegasus_Relocation relocs[reloc_count];
+} Pegasus_RelocTable <open=true>;
+
+typedef struct {
+    uint16 cmdtype <bgcolor=cGreen>;
+    uint16 cmdsize <bgcolor=cDkGreen>;
+    
+    if(cmdtype == 1) {
+        Pegasus_Segment seg(cmdsize);
+    }
+    else if(cmdtype == 2) {
+        Pegasus_Entrypoint entry(cmdsize);
+    }
+    else if(cmdtype == 3) {
+        Pegasus_SymbolTable symtab(cmdsize);
+    }
+    else if(cmdtype == 4) {
+        Pegasus_RelocTable reltab(cmdsize);
+    }
+    else {
+        char unknown[cmdsize - (2 + 2)] <open=false>;
+    }
+} Pegasus_Command <size=sizeof_Pegasus_Command, open=true>;
+
+int sizeof_Pegasus_Command(Pegasus_Command& cmd) {
+    return ReadUShort(startof(cmd) + 2);
+}
+
+typedef struct {
+    char magic[8] <bgcolor=cYellow, format=hex, open=false>;
+    char arch[4] <bgcolor=cLtGray, open=false>;
+    uint16 num_cmds <bgcolor=cBlue>;
+    
+    if(num_cmds != 0) {
+        Pegasus_Command cmds[num_cmds] <optimize=false, open=true>;
+    }
+} Pegasus <open=true>;
+
+Pegasus peg;

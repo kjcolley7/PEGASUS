@@ -1,0 +1,229 @@
+/*
+// Expects pw to end w/ a newline
+u8 check_password(const char* pw) {
+	char c;
+	do {
+		c = *pw++;
+		WRB(1, c);
+	} while(c != '\n');
+	
+	return RDB(1);
+}
+*/
+.scope
+.export @check_password
+@check_password: //LEAF
+
+@.write_char:
+	LDB     R3, [R2]
+	WRBN    (1), R3
+	INCN    R2
+	CMP     R3, '\n'
+	BRR.NE  @.write_char
+	
+	RDB     RV, (1)
+	RET
+
+/*
+u8 brute_one(char* pw, u16 idx) {
+	char* p = &pw[idx];
+	*p = ' ';
+	p[1] = '\n';
+	
+	u8 correct_count;
+	while((correct_count = check_password(pw)) == idx) {
+		if(++*p > 0x7E) {
+			return 0;
+		}
+	}
+	
+	return correct_count;
+}
+*/
+.scope
+.export @brute_one
+@brute_one:
+	PSH     {R8-R9, RA, RD}
+	
+	MOV     R8, R2
+	ADD     R9, R8, R3
+	
+	// pw[idx] = ' '
+	STB     [R9], ' '
+	
+	// pw[idx + 1] = '\n'
+	INC     R9
+	STB     [R9], '\n'
+	DEC     R9
+	BRR     @.while_cond
+	
+@.while_body:
+	// if(++*p > 0x7E) return 0;
+	LDB     R3, [R9]
+	INC     R3
+	STB     [R9], R3
+	CMP     R3, 0x7E
+	BRR.GT  @.return_zero
+	
+@.while_cond:
+	// while(check_password(pw) == idx)
+	MOV     R2, R8
+	FCR     @check_password
+	SUB     R3, R9, R8
+	CMP     R2, R3
+	BRR.EQ  @.while_body
+	
+	// RV still holds the return value from check_password
+	
+@.return:
+	POP     {R8-R9, PC, DPC}
+
+@.return_zero:
+	MOV     RV, ZERO
+	BRR     @.return
+
+/*
+void print_hex16(u16 num) {
+	//num in R8
+	u16 shift = 12; //R9
+	while(1) {
+		u8 nyb = num >> shift;
+		putchar("0123456789ABCDEF"[nyb]);
+		if(shift == 0) {
+			break;
+		}
+		
+		shift -= 4;
+	}
+}
+*/
+.scope
+.export @print_hex16
+@print_hex16:
+	PSH     {R8-R9, RA, RD}
+	MOV     R8, R2
+	MOV     R9, 12
+	
+@.do_body:
+	SRU     R2, R8, R9
+	AND     R2, 0xF
+	ADR     R3, @.hexchars
+	ADD     R3, R2
+	LDB     R2, [R3]
+	WRB     R2
+	
+	MOV     R9, R9
+	SUBN.NZ R9, 4
+	BRR.NZ  @.do_body
+	
+@.return:
+	POP     {R8-R9, PC, DPC}
+
+@.hexchars:
+	.db "0123456789ABCDEF"
+
+/*
+void brute(char* pw) {
+	u8 i;
+	
+	u8 correct_count;
+	for(i = 0; (correct_count = brute_one(pw, i)) != 0; i++) {
+		if(correct_count == 0xFF) {
+			return;
+		}
+	}
+}
+*/
+.scope
+.export @brute
+@brute:
+	PSH     {R8-R9, RA, RD}
+	
+	MOV     R8, R2
+	MOV     R9, ZERO
+	
+@.brute_loop:
+	// correct_count = brute_one(pw, i)
+	MOV     R2, R8
+	MOV     R3, R9
+	FCR     @brute_one
+	
+	// if(correct_count == 0xFF) return;
+	CMP     RV, 0xFF
+	BRR.EQ  @.return
+	
+	// correct_count != 0; i++
+	MOV     RV, RV
+	INCN.NZ R9
+	BRR.NZ  @.brute_next
+	
+@.return:
+	POP     {R8-R9, PC, DPC}
+	
+@.brute_next:
+	WRB     '0'
+	WRB     'x'
+	FCR     @print_hex16
+	WRB     ':'
+	WRB     ' '
+	MOV     R2, R8
+	
+@.print_attempt:
+	// puts(pw)
+	LDB     R3, [R2]
+	WRB     R3
+	CMP     R3, '\n'
+	INCN.NE R2
+	BRR.NE  @.print_attempt
+	
+	BRR     @.brute_loop
+
+/*
+void print_flag(const char* pw) {
+	char c;
+	do {
+		c = *pw++;
+		putchar(c);
+	} while(c != '\n');
+}
+*/
+.scope
+.export @print_flag
+@print_flag: //LEAF
+	WRB     'F'
+	WRB     'L'
+	WRB     'A'
+	WRB     'G'
+	WRB     ':'
+	
+@.write_char:
+	LDB     R3, [R2]
+	WRB     R3
+	CMP     R3, '\n'
+	INCN.NE R2
+	BRR.NE  @.write_char
+	
+	RET
+
+/*
+void main() {
+	char password[100];
+	brute(password);
+	print_flag(password);
+}
+*/
+.scope
+.export @main
+@main:
+	WRB     'H'
+	WRB     'I'
+	WRB     '\n'
+	
+	SUB     SP, 100
+	MOV     R2, SP
+	FCR     @brute
+	
+	MOV     R2, SP
+	FCR     @print_flag
+	
+	HLT

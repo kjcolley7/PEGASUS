@@ -1,0 +1,70 @@
+/*
+void puts(const char* R2) {
+	if(R2 == NULL) {
+		return;
+	}
+	
+	char R3;
+	u16 R4;
+	u16 R5 = 0x7f;
+	do {
+		R3 = *R2++;
+		R4 = R3 & R5;
+		WRB(R4);
+	} while(R3 > R4);
+}
+*/
+.scope
+.export @puts
+@puts: //LEAF
+	MOV     R2, R2                // NULL check (more lightweight than CMP)
+	RET.EQ                        // Return if NULL
+	
+	MOV     R5, 0x7f              // Create mask for the ASCII character bits
+	
+@.next_char:
+	LDB     R3, [R2]              // Load character from string
+	INC     R2                    // Increment string pointer
+	AND     R4, R3, R5            // Mask off the continuation bit
+	WRB     R4                    // Write ASCII character
+	CMP     R3, R4                // Check for continuation bit
+	BRR.GT  @.next_char           // Continuation bit was set, keep iterating through the string
+	
+	RET
+
+
+.scope
+.export @decrypt_flag
+@decrypt_flag: //LEAF
+	ADR     R2, @encrypted_flag
+	ADR     R3, @decryption_key
+	
+	MOV     R4, R3
+	
+@.decrypt_loop:
+	LDB     R5, [R2]
+	LDB     R6, [R3]
+	INC     R3
+	XOR     R5, R6
+	STB     [R2], R5
+	INC     R2
+	
+	CMP     R2, R4
+	BRR.LT  @.decrypt_loop
+	
+	RET
+
+.scope
+.export @main
+@main:
+	FCR     @decrypt_flag
+	ADR     R2, @encrypted_flag
+	FCR     @puts
+	HLT
+
+.segment @DATA
+@encrypted_flag:
+	.db "\x98\x90\x97\x99\x82\xd1\x80\xd7\xff\x89\xd1\x90\xdd\xb6\xd9\xd7\xff\x9b\xc0\x94\x82\xaa\x97\x94\x95\xce\x91\x2b"
+
+@decryption_key:
+	.db "\x6b\x65\x79\x62\x6f\x61\x72\x64\x20\x6d\x61\x73\x68\x69\x6e\x67\x20\x69\x73\x20\x66\x75\x6e\x20\x6c\x6f\x6c\x21"

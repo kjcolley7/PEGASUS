@@ -1,0 +1,6 @@
+[submodule "kjc_argparse"]
+	path = kjc_argparse
+	url = https://github.com/kjcolley7/kjc_argparse.git
+[submodule "pegasus_ear/linenoise"]
+	path = pegasus_ear/linenoise
+	url = https://github.com/antirez/linenoise.git

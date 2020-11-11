@@ -1,0 +1,181 @@
+/*
+int gets(char* buffer) {
+	int value, prev_value = 0;
+	int bytes_read = 0;
+	
+	while((value = port_read(stdio)) >= 0) {
+		if(value == '\n') {
+			*buffer = prev_value;
+			break;
+		}
+		
+		if(bytes_read != 0) {
+			*buffer++ = prev_value | 0x80;
+		}
+		
+		prev_value = value;
+		++bytes_read;
+	}
+	
+	if(value < 0) {
+		return value;
+	}
+	
+	return bytes_read;
+}
+*/
+
+
+// R2 = buffer
+// R4 = bytes_read
+// R5 = value
+// R6 = prev_value
+.scope
+.export @gets
+@gets:
+	// bytes_read = 0;
+	MOV     R4, ZERO
+	MOV     R6, ZERO
+	BRR     @.while_cond
+	
+@.while_body:
+	/*
+	if(value == '\n') {
+		*buffer = prev_value;
+		break;
+	}
+	*/
+	CMP     R5, '\n'
+	STB.EQ  [R2], R6
+	BRR.EQ  @.while_after
+	
+	/*
+	if(bytes_read != 0) {
+		*buffer++ = prev_value | 0x80;
+	}
+	*/
+	MOV     R4, R4
+	BRR.ZR  @.skip_first_write
+	
+	ORR     R6, 0x80
+	STB     [R2], R6
+	INC     R2
+	
+@.skip_first_write:
+	// prev_value = value;
+	MOV     R6, R5
+	
+	// ++bytes_read;
+	INC     R4
+	
+@.while_cond:
+	// while(value = port_read(portnum)) >= 0)
+	RDB     R5
+	BRR.CC  @.while_body
+	// if(value < 0) return value;
+	MOV     RV, R5
+	BRR     @.return
+	
+@.while_after:
+	// return bytes_read;
+	MOV     RV, R4
+	
+@.return:
+	RET
+
+
+/*
+void puts(const char* R2) {
+	if(R2 == NULL) {
+		return;
+	}
+	
+	char R3;
+	u16 R4;
+	u16 R5 = 0x7f;
+	do {
+		R3 = *R2++;
+		R4 = R3 & R5;
+		WRB(R4);
+	} while(R3 > R4);
+}
+*/
+.scope
+.export @puts
+@puts: //LEAF
+	MOV     R2, R2                 // NULL check (more lightweight than CMP)
+	RET.EQ                        // Return if NULL
+	
+	MOV     R5, 0x7f               // Create mask for the ASCII character bits
+	
+@.next_char:
+	LDB     R3, [R2]               // Load character from string
+	INC     R2                     // Increment string pointer
+	AND     R4, R3, R5             // Mask off the continuation bit
+	WRB     R4                     // Write ASCII character
+	CMP     R3, R4                 // Check for continuation bit
+	BRR.GT  @.next_char            // Continuation bit was set, keep iterating through the string
+	
+	RET
+
+.scope
+.export @save_regs
+@save_regs:
+	PSH     {RA, RD}
+	PSH     R2, {R3-R7}
+	POP     {PC, DPC}
+
+.scope
+.export @login
+@login:
+	PSH     {R3-R8, FP, RA, RD}
+	MOV     FP, SP
+	SUB     SP, 50
+	
+	MOV     R8, R2
+	
+	ADR     R2, @prompt_password
+	FCR     @puts
+	
+	MOV     R2, R8
+	FCR     @puts
+	
+	WRB     ':'
+	WRB     ' '
+	
+	MOV     R2, SP
+	FCR     @gets
+	
+	ADR     R2, @login_success
+	FCR     @puts
+	
+	MOV     RV, ZERO
+	MOV     SP, FP
+	POP     {R3-R8, FP, PC, DPC}
+
+.scope
+.export @main
+@main:
+	SUB     SP, 50
+	
+	ADR     R2, @prompt_user
+	FCR     @puts
+	
+	MOV     R2, SP
+	FCR     @gets
+	
+	MOV     R2, SP
+	FCR     @login
+	
+	ADR     R2, @login_success
+	FCR     @puts
+	HLT
+
+@prompt_user:
+	.lestring "Enter username: "
+
+@prompt_password:
+	.lestring "Enter password for "
+
+@login_success:
+	.lestring "Login success!\n"
