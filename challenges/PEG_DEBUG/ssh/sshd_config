@@ -1,0 +1,27 @@
+# Port will be added by Dockerfile
+Protocol 2
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_dsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+UsePrivilegeSeparation yes
+KeyRegenerationInterval 3600
+ServerKeyBits 1024
+LogLevel INFO
+LoginGraceTime 120
+StrictModes yes
+IgnoreRhosts yes
+RSAAuthentication no
+PubkeyAuthentication no
+RhostsRSAAuthentication no
+HostbasedAuthentication no
+ChallengeResponseAuthentication no
+PasswordAuthentication yes
+PermitRootLogin no
+PermitEmptyPasswords yes
+UsePAM yes
+X11Forwarding no
+PrintMotd no
+PrintLastLog no
+TCPKeepAlive yes
+PidFile none

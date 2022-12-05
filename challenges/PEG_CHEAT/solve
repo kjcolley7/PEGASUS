@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+from pwn import *
+
+context.log_level = "warn"
+
+r = remote("localhost", 22704)
+
+r.recvuntil(b"Enter cheat code?\n")
+r.sendline(b"UUDDLRLRBA")
+
+r.recvuntil(b"Address to patch?\n")
+r.sendline(b"036c")
+
+r.recvuntil(b"Byte to replace with?\n")
+r.sendline(b"f5")
+
+r.recvuntil(b"Pick a silicon panel to jump forwards to. [L/R]?\n")
+r.sendline(b"R")
+
+r.recvuntil(b"You Win!\n")
+print(r.recvlineS(keepends=False))

@@ -2,6 +2,17 @@ PEG_DIR := $(DIR)
 PEG_BIN := $(PEG_DIR)/bin
 PEG_BUILD := $(BUILD)/$(PEG_DIR)
 PEG_PATH := $(abspath $(PEG_BIN)):$(PATH)
+PEG_SESSIONS_MOUNT_ARG := --volumes-from pegsession
+PEG_SESSIONS_MOUNT_POINT := /pegasus-sessions
+PEG_SESSIONS_START_DEP := docker-start[pegsession]
+
+# Ports!
+PEGSESSION_PORT := 22700
+PEG_DEBUG_PORT := 22701
+PEG_DEBUG_SSH_PORT := 22702
+PEG_AUTOREV_PORT := 22703
+PEG_CHEAT_PORT := 22704
+PEG_AUTOREV2_PORT := 22705
 
 ifdef PYTHONPATH
 PEG_PYTHONPATH := $(PYTHONPATH):$(abspath $(PEG_DIR))
@@ -42,6 +53,7 @@ $(PEG_DIR)/%.peg: $(PEG_DIR)/%.ear
 	$(_V)echo 'Assembling $<'
 	$(_v)$(EARASM) $< $@
 
+
 #####
 # checkrule($1: path to input peg/tests/<test>.ear w/o extension, $2: path to the output .peg file)
 #####
@@ -63,6 +75,41 @@ checkrule = $(eval $(call _checkrule,$1,$2))
 #####
 
 
+#####
+# make_loadable_exe($1: DIR)
+#
+# Fix the dynamic linking problem for executable libraries
+#####
+define _make_loadable_exe
+
+BINTYPE := executable
+
+ifdef IS_LINUX
+
+TARGET_PATCHED := $$(TARGET)
+TARGET := $$(TARGET:.so=-nold.so)
+
+PRODUCTS := $$(PRODUCTS) $$(PEG_BIN)/$$(TARGET_PATCHED)
+
+LDFLAGS := $$(LDFLAGS) -Wl,-E
+LDLIBS := $$(LDLIBS) -ldl
+
+$$(PEG_BIN)/%.so: $$(BUILD)/$1/%-nold.so $$(PEG_BIN)/mkexeloadable
+	$$(_V)echo 'Patching $$@ to be loadable with dlopen()'
+	$$(_v)cp $$< $$@.tmp && $$(PEG_BIN)/mkexeloadable $$@.tmp && mv $$@.tmp $$@
+
+else #IS_LINUX
+
+PRODUCT := $$(PEG_BIN)/$$(TARGET)
+PRODUCTS := $$(PRODUCTS) $$(PRODUCT)
+
+endif #IS_LINUX
+
+endef
+make_loadable_exe = $(eval $(call _make_loadable_exe,$1))
+#####
+
+
 PEG_CHECK_FILES := $(wildcard $(PEG_DIR)/tests/*.expected)
 $(foreach f,$(PEG_CHECK_FILES),$(call checkrule,$(f:.expected=),$(patsubst $(PEG_DIR)/%.expected,$(PEG_BUILD)/%.peg,$f)))
 
@@ -71,5 +118,5 @@ PUBLISH := \
 	bin/libpegasus_ear.so \
 	bin/runpeg \
 	bin/submitpeg \
-	docs/EAR_EAR.md \
+	docs/EAR_EAR_v2.md \
 	docs/PEGASUS.md

@@ -58,7 +58,7 @@ typedef struct (uint16 cmdsize) {
 } Pegasus_Segment <open=true>;
 
 typedef struct (uint16 cmdsize) {
-    uint16 RV, R3, R4, R5, R6, R7;
+    uint16 A0, A1, A2, A3, A4, A5;
     uint16 PC <bgcolor=cRed>;
     uint16 DPC <bgcolor=cAqua>;
 } Pegasus_Entrypoint <open=true>;

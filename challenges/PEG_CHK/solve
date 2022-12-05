@@ -1,4 +1,0 @@
-#!/bin/sh
-
-# Running the challenge binary just prints out the flag directly
-runpeg peg_chk.peg

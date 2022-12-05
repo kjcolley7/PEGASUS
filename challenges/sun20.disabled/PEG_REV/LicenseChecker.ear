@@ -1,0 +1,528 @@
+/*
+int read_line(char* buffer, size_t size) {
+	int value, prev_value = 0;
+	int bytes_read = 0;
+	
+	while(bytes_read < size && (value = port_read(stdio)) >= 0) {
+		if(value == '\n') {
+			*buffer = prev_value;
+			break;
+		}
+		
+		if(bytes_read != 0) {
+			*buffer++ = prev_value | 0x80;
+		}
+		
+		prev_value = value;
+		++bytes_read;
+	}
+	
+	if(value < 0) {
+		return value;
+	}
+	
+	return bytes_read;
+}
+*/
+
+
+// A0 = buffer
+// A1 = size
+// R3 = bytes_read
+// R4 = value
+// R5 = prev_value
+.scope
+.export @read_line
+@read_line:
+	// bytes_read = 0;
+	MOV     R3, ZERO
+	MOV     R5, ZERO
+	BRR     @.while_cond
+	
+@.while_body:
+	/*
+	if(value == '\n') {
+		*buffer = prev_value;
+		break;
+	}
+	*/
+	CMP     R4, '\n'
+	STB.EQ  [A0], R5
+	BRR.EQ  @.while_after
+	
+	/*
+	if(bytes_read != 0) {
+		*buffer++ = prev_value | 0x80;
+	}
+	*/
+	MOV     R3, R3
+	BRR.ZR  @.skip_first_write
+	
+	ORR     R5, 0x80
+	STB     [A0], R5
+	INC     A0
+	
+@.skip_first_write:
+	// prev_value = value;
+	MOV     R5, R4
+	
+	// ++bytes_read;
+	INC     R3
+	
+@.while_cond:
+	// while(bytes_read < size ...
+	CMP     R3, A1
+	BRR.GE  @.while_after
+	//       ... && (value = port_read(portnum)) >= 0)
+	RDB     R4
+	BRR.CC  @.while_body
+	// if(value < 0) return value;
+	MOV     RV, R4
+	BRR     @.return
+	
+@.while_after:
+	// return bytes_read;
+	MOV     RV, R3
+	
+@.return:
+	RET
+
+
+/*
+void puts(
+	const char* s //A0
+) {
+	if(s == NULL) {
+		return;
+	}
+	
+	char byte;         //R2
+	u16 c;             //R3
+	u16 ascii = 0x7f;  //R4
+	do {
+		byte = *s++;
+		c = byte & ascii;
+		WRB(c);
+	} while(byte != c);
+}
+*/
+.scope
+.export @puts
+@puts: //LEAF
+	MOV     A0, A0                 // NULL check (more lightweight than CMP)
+	RET.EQ                         // Return if NULL
+	
+	MOV     R4, 0x7f               // Create mask for the ASCII character bits
+	
+@.next_char:
+	LDB     R2, [A0]               // Load character from string
+	INC     A0                     // Increment string pointer
+	AND     R3, R2, R4             // Mask off the continuation bit
+	WRB     R3                     // Write ASCII character
+	CMP     R2, R3                 // Check for continuation bit
+	BRR.NE  @.next_char            // Continuation bit was set, keep iterating through the string
+	
+	RET
+
+
+/*
+void give_flag(void) {
+	char c;
+	while(rdb(FLAG_PORT, &c)) {
+		wrb(c);
+	}
+	exit(0);
+}
+*/
+.scope
+.export @give_flag
+@give_flag: //LEAF, NORETURN
+@.next_char:
+	RDB     R1, (0xF)
+	WRBN.CC R1
+	BRR.CC  @.next_char
+	
+	HLT
+
+/*
+void fail(void) {
+	printf("Invalid email or license key.\n");
+	abort();
+}
+*/
+.scope
+.export @fail
+@fail: //NORETURN
+	ADR     A0, @.fail_msg
+	FCR     @puts
+	HLT
+	
+@.fail_msg:
+	.lestring "Invalid email or license key.\n"
+
+
+/*
+int check_license(
+	char* email,               // A0 -> R3
+	u8 key[8]                  // A1/R2 -> R1
+) {
+	int d = 0;                 // RV/R2
+	
+	char* p = email;           // R4
+	while(*p & 0x80) ++p;
+	
+	char* q = p;               // R5
+	d = p - email;
+	if(d < 11) {
+		return ++d;
+	}
+	
+	if(d = (*p-- - 'r')) return c;
+	if(d = (*p-- ^ t'a')) return c;
+	if(d = (*p-- - t'e')) return c;
+	if(d = (*p-- ^ t'.')) return c;
+	if(d = (*p-- - t'g')) return c;
+	if(d = (*p-- ^ t'e')) return c;
+	if(d = (*p-- - t'p')) return c;
+	if(d = (*p-- ^ t'@')) return c;
+	
+	p = email;                 // R4
+	int i = 0;                 // R3
+	do {
+		char tmp1 = *p++;      // R6
+		d = key[i];            // R2 = d
+		d += tmp1;
+		
+		char* tmp2 = &key[i];  // R6
+		*tmp2 = d;
+		i += 1;
+		i &= 7;
+	} while(p <= q);           // R5 = q
+	
+	d = 0;
+	for(int i = 0; i < 8; i++) {
+		d |= key[i];
+	}
+	
+	return d;
+}
+*/
+
+// R1 = key
+// RV = d
+// R3 = email/i
+// R4 = p
+// R5 = q
+// R6 = tmp1/tmp2
+.scope
+.export @check_license
+@check_license: //LEAF
+	MOV     R3, A0 //email
+	MOV     R4, A0 //p
+	MOV     R1, A1 //key
+	
+	// while(*p & 0x80) ++p;
+@.find_end:
+	LDB     RV, [R4]        //d = *p
+	AND     ZERO, RV, 0x80  //cond = d & 0x80
+	INCN.NZ R4              //++p
+	BRR.NZ  @.find_end      //while(cond)
+	
+	//char* q = p;
+	MOV     R5, R4 //q
+	
+	/*
+	d = p - email;
+	if(d < 10) {
+		return ++d;
+	}
+	*/
+	SUB     RV, R4, R3
+	CMP     RV, 10
+	INCN.LT RV
+	RET.LT
+	
+	
+	//if(d = (*p-- - 'r')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	SUB     RV, 'r'
+	RET.NZ
+	//if(d = (*p-- ^ t'a')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	XOR     RV, 'a' | 0x80
+	RET.NZ
+	//if(d = (*p-- - t'e')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	SUB     RV, 'e' | 0x80
+	RET.NZ
+	//if(d = (*p-- ^ t'.')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	XOR     RV, '.' | 0x80
+	RET.NZ
+	//if(d = (*p-- - t'g')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	SUB     RV, 'g' | 0x80
+	RET.NZ
+	//if(d = (*p-- ^ t'e')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	XOR     RV, 'e' | 0x80
+	RET.NZ
+	//if(d = (*p-- - t'p')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	SUB     RV, 'p' | 0x80
+	RET.NZ
+	//if(d = (*p-- ^ t'@')) return c;
+	LDB     RV, [R4]
+	DEC     R4
+	XOR     RV, '@' | 0x80
+	RET.NZ
+	
+	
+	/*
+	p = email;                 // R4
+	int i = 0;                 // R3
+	do {
+		char tmp1 = *p++;      // R6
+		d = key[i];            // RV = d
+		d += tmp1;
+		
+		char* tmp2 = &key[i];  // R6
+		*tmp2 = d;
+		i += 1;
+		i &= 7;
+	} while(p <= q);           // R5 = q
+	*/
+	MOV     R4, R3
+	MOV     R3, ZERO
+	
+@.perturb:
+	LDB     R6, [R4]
+	INC     R4
+	ADD     RV, R1, R3
+	LDB     RV, [RV]
+	ADD     RV, R6
+	
+	ADD     R6, R1, R3
+	STB     [R6], RV
+	INC     R3
+	AND     R3, 7
+	CMP     R4, R5
+	BRR.LE  @.perturb
+	
+	/*
+	d = 0;
+	for(int i = 0; i < 8; i++) {
+		d |= key[i];
+	}
+	*/
+	MOV     RV, ZERO
+	MOV     R3, ZERO
+	
+@.orr_next:
+	ADD     R4, R1, R3
+	LDB     R4, [R4]
+	ORR     RV, R4
+	
+	CMP     R3, 7
+	INCN.LT R3
+	BRR.LT  @.orr_next
+	
+	RET
+
+
+/*
+u16 decode_b16(
+	lestring* str,             // A0
+	u16 size,                  // A1
+	u8* buf                    // A2
+) {
+	while(size-- > 0) {
+		u8 c = *str;           // R4
+		if(!(c & 0x80)) {
+			return size;
+		}
+		++str;
+		
+		c -= 'k' | 0x80;
+		if(c > 0xF) {
+			return size;
+		}
+		
+		u8 byte = *str++;      // R6
+		u8 d = byte & 0x7F;    // R5
+		d -= 'A';
+		if(d > 0xF) {
+			return size;
+		}
+		
+		if(d == byte) {
+			size = 0;
+		}
+		*buf++ = c | (d << 4);
+	}
+	return 0;
+}
+*/
+.scope
+.export @decode_b16
+@decode_b16:
+	// while(size-- > 0) {
+@.decode_loop:
+	MOV     A1, A1
+	RET.ZR  // return size (== 0)
+	DEC     A1
+	
+	/*
+	u8 c = *str;               // R4
+	if(!(c & 0x80)) {
+		return size;
+	}
+	++str;
+	*/
+	LDB     R4, [A0]
+	AND     ZERO, R4, 0x80
+	RET.ZR  // return size (!= 0)
+	INC     A0
+	
+	/*
+	c -= 'k' | 0x80;
+	if(c > 0xF) {
+		return size;
+	}
+	*/
+	SUB     R4, 'k' | 0x80
+	CMP     R4, 0xF
+	RET.GT  // return size (!= 0)
+	
+	/*
+	u8 byte = *str++;      // R6
+	u8 d = byte & 0x7F;    // R5
+	d -= 'A';
+	if(d > 0xF) {
+		return size;
+	}
+	*/
+	LDB     R6, [A0]
+	INC     A0
+	AND     R5, R6, 0x7f
+	SUB     R5, 'A'
+	CMP     R5, 0xF
+	RET.GT  // return size (!= 0)
+	
+	/*
+	if(d == byte) {
+		size = 0;
+	}
+	*/
+	CMP     R5, R6
+	MOV.EQ  A1, ZERO
+	
+	// *buf++ = c | (d << 4);
+	SHL     R5, 4
+	ORR     R4, R5
+	STB     [A2], R4
+	INC     A2
+	BRR     @.decode_loop
+
+
+.scope
+@.prompt_email:
+	.lestring "Email: "
+
+@.prompt_license_key:
+	.lestring "License key: "
+
+.export @main
+@main:
+	ADR     A0, @.prompt_email
+	FCR     @puts
+	
+	SUB     SP, 30
+	MOV     A0, SP
+	MOV     A1, 30
+	FCR     @read_line
+	
+	CMP     RV, 30
+	BRR.NE  @.not_truncated
+	
+	ADD     R3, SP, 29
+	LDB     R4, [R3]
+	AND     ZERO, R4, 0x80
+	BRR.ZR  @.not_truncated
+	
+	FCR     @fail
+	
+@.not_truncated:
+	ADR     A0, @.prompt_license_key
+	FCR     @puts
+	
+	SUB     SP, 30
+	MOV     A0, SP
+	MOV     A1, 30
+	FCR     @read_line
+	
+	CMP     RV, 30
+	BRR.NE  @.not_truncated2
+	
+	ADD     R3, SP, 29
+	LDB     R4, [R3]
+	AND     ZERO, R4, 0x80
+	BRR.ZR  @.not_truncated2
+	
+	FCR     @fail
+	
+@.not_truncated2:
+	MOV     A0, SP
+	MOV     A1, 8
+	MOV     A2, SP
+	FCR     @decode_b16
+	MOV     RV, RV
+	FCR.NZ  @fail
+	
+	MOV     A1, SP
+	ADD     A0, A1, 30
+	FCR     @check_license
+	
+	MOV     RV, RV
+	FCR.ZR  @give_flag
+	
+	FCR     @fail
+	HLT
+
+/*
+.scope
+.export @main
+@main:
+	ADR     A0, @.email
+	ADR     A1, @key
+	FCR     @check_license
+	ADR     R3, @key
+	BPT
+	HLT
+
+@.email:
+	.lestring "kev@peg.ear"
+
+.segment @DATA
+@key:
+	.db -('k' | 0x80) - ('e' | 0x80)
+	.db -('e' | 0x80) - ('a' | 0x80)
+	.db -('v' | 0x80) - 'r'
+	.db -('@' | 0x80)
+	.db -('p' | 0x80)
+	.db -('e' | 0x80)
+	.db -('g' | 0x80)
+	.db -('.' | 0x80)
+*/
+
+
+// Example solution
+// Email: kev@peg.ear
+// License key: kDuDsJkEkBvBtBmF

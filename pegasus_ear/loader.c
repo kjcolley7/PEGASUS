@@ -218,8 +218,8 @@ PegStatus PegasusLoader_load(PegasusLoader* self) {
 			if(!self->handleEntry(
 				self->handleEntry_cookie,
 				entry->pc, entry->dpc,
-				entry->rv, entry->r3, entry->r4,
-				entry->r5, entry->r6, entry->r7
+				entry->a0, entry->a1, entry->a2,
+				entry->a3, entry->a4, entry->a5
 			)) {
 				return PEG_ENTRYPOINT_ERROR;
 			}

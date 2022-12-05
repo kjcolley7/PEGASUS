@@ -454,8 +454,8 @@ class InsnNOP(InsnBare):
 	OPCODE = 0x1F
 
 class PseudoInstruction(Instruction):
-	def __init__(self, cc="AL", toggle_flags=False):
-		Instruction.__init__(self, cc, toggle_flags)
+	def __init__(self, cc="AL", toggle_flags=False, write_flags=None):
+		Instruction.__init__(self, cc, toggle_flags, write_flags)
 		self.insns = None
 	
 	def get_instructions(self):
@@ -580,31 +580,35 @@ class PseudoAddOrSubWithCarry(PseudoInstruction):
 		else:
 			"""
 			ADC Rd, Ra, Vb:
-				INC.CS Rd, ZERO, 1
-				ADD Rd, Ra
-				ADD Rd, Vb
+				MOV     Rd, ZERO
+				INC.CS  Rd
+				ADD     Rd, Ra
+				ADD     Rd, Vb
 			
 			SBC Rd, Ra, Vb:
-				DEC.CS Rd, ZERO, 1
-				ADD Rd, Ra
-				SUB Rd, Vb
+				MOV     Rd, ZERO
+				DEC.CS  Rd
+				ADD     Rd, Ra
+				SUB     Rd, Vb
 			
 			ADC.cc Rd, Ra, Vb:
 				BRR.!cc PC, @.after - @PC@
-				ADC Rd, Ra, Vb
+				ADC     Rd, Ra, Vb
 			
 			@.after:
 			"""
-			incdec_cs = incdec("CS").set_operands(Rd=self.rd, Rx=RegExpr("ZERO"))
+			zero_rd = InsnMOV().set_operands(Rx=self.rd, Vy=RegExpr("ZERO"))
+			incdec_cs = incdec("CS").set_operands(Rx=self.rd)
 			add_da = InsnADD().set_operands(Rx=self.rd, Vy=self.ra)
 			addsub_db = addsub().set_operands(Rx=self.rd, Vy=self.vb)
 			
 			ret = []
 			if self.cc != "AL":
-				jump_amount = len(incdec_cs) + len(add_da) + len(addsub_db)
+				jump_amount = len(zero_rd) + len(incdec_cs) + len(add_da) + len(addsub_db)
 				brr_after = InsnBRR(CONDITION_INVERSES[self.cc]).set_operands(Imm16=jump_amount)
 				ret.append(brr_after)
 			
+			ret.append(zero_rd)
 			ret.append(incdec_cs)
 			ret.append(add_da)
 			ret.append(addsub_db)

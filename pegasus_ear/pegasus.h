@@ -36,7 +36,7 @@ struct Pegasus {
 	void* peg_data;
 	size_t peg_size;
 	size_t peg_pos;
-	int peg_fd;
+	bool should_free;
 	
 	Pegasus_Header header;
 	
@@ -61,7 +61,7 @@ struct Pegasus_Segment {
 };
 
 struct Pegasus_Entrypoint {
-	uint16_t rv, r3, r4, r5, r6, r7, pc, dpc;
+	uint16_t a0, a1, a2, a3, a4, a5, pc, dpc;
 } __attribute__((packed));
 
 struct Pegasus_Symbol {
@@ -91,8 +91,10 @@ PegStatus Pegasus_parseFromFile(Pegasus* self, const char* filename);
  * 
  * @param data Pointer to the beginning of the PEGASUS file data
  * @param size Number of bytes in the PEGASUS file data
+ * @param shouldFree True if free() should be called on the data pointer
+ *                   when the Pegasus object is destructed
  */
-PegStatus Pegasus_parseFromMemory(Pegasus* self, void* data, size_t size);
+PegStatus Pegasus_parseFromMemory(Pegasus* self, void* data, size_t size, bool shouldFree);
 
 /*!
  * @brief Seek to a specific position in an opened PEGASUS file.

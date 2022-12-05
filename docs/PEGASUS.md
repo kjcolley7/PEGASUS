@@ -46,14 +46,14 @@ struct Pegasus_Segment: Pegasus_Cmd {
 // During load, call the function at PC.DPC with 6 arguments controlled
 // cmd_type = 2
 struct Pegasus_Entrypoint: Pegasus_Cmd {
-	uint16_t RV, R3, R4, R5, R6, R7, PC, DPC;
+	uint16_t A0, A1, A2, A3, A4, A5, PC, DPC;
 };
 
 // Describes the location and size of the symbol table in this PEGASUS file
 // cmd_type = 3
 struct Pegasus_SymbolTable: Pegasus_Cmd {
 	uint16_t sym_count;             // Total number of symbols in the symbol table
-	uint16_t sym_off;               // File offset in bytes to the start of the symbol table
+	Pegasus_Symbol syms[sym_count]; // List of symbols in the symbol table
 };
 
 // Defines a single symbol's value
@@ -75,5 +75,3 @@ struct Pegasus_Relocation {
 	uint16_t fileoff;               // File offset in bytes to where the relocation value should be written
 };
 ```
-
-`_w1ll_b3_1mp0r74n7!}`

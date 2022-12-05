@@ -11,11 +11,13 @@ thumbs.db
 .build/
 .pytest_cache/
 .vscode/
+.dir
+.docker/
+publish/
 
-build/
 bin/
 *.peg
-/output
 
 .gdb_history
 peda-session-*.txt
+.bash_history

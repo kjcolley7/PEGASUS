@@ -42,16 +42,17 @@ typedef struct PegSrvCookie {
 
 
 static bool receive_peg(int sock, void** out_peg_data, uint32_t* out_peg_size) {
+	bool ret = false;
 	char client_dir[100];
 	char peg_path[100];
 	uint32_t peg_size;
-	void* peg_data;
+	void* peg_data = NULL;
 	struct sockaddr_in cli_addr;
 	socklen_t cli_len;
 	uint32_t ip;
 	int err;
 	time_t curtime, floortime;
-	int peg_fd;
+	int peg_fd = -1;
 	ssize_t bytes_written;
 	
 	printf("PEG SIZE?\n");
@@ -59,26 +60,26 @@ static bool receive_peg(int sock, void** out_peg_data, uint32_t* out_peg_size) {
 	errno = 0;
 	if(recv(sock, &peg_size, sizeof(peg_size), 0) != sizeof(peg_size)) {
 		printf("Failed to receive PEG SIZE: %s\n", strerror(errno));
-		return false;
+		goto out;
 	}
 	
 	peg_size = ntohl(peg_size);
 	if(peg_size > PEG_SIZE_MAX) {
 		printf("PEG SIZE exceeds max! (%u > %u)\n", peg_size, PEG_SIZE_MAX);
-		return false;
+		goto out;
 	}
 	
 	peg_data = malloc(peg_size);
 	if(peg_data == NULL) {
 		printf("Out of memory\n");
-		return false;
+		goto out;
 	}
 	
 	printf("PEG DATA?\n");
 	errno = 0;
 	if(recv(sock, peg_data, peg_size, MSG_WAITALL) != peg_size) {
 		printf("Failed to receive PEG DATA: %s\n", strerror(errno));
-		return false;
+		goto out;
 	}
 	
 	// Get client's IP address
@@ -116,20 +117,28 @@ static bool receive_peg(int sock, void** out_peg_data, uint32_t* out_peg_size) {
 			"Retry-After: %ld\n",
 			floortime + PEG_ATTEMPT_DELAY - curtime + 1
 		);
-		return false;
+		goto out;
 	}
 	
 	bytes_written = write(peg_fd, peg_data, peg_size);
 	if(bytes_written != peg_size) {
 		printf("Error writing PEG DATA\n");
-		return false;
+		goto out;
 	}
-	
-	close(peg_fd);
 	
 	*out_peg_data = peg_data;
 	*out_peg_size = peg_size;
-	return true;
+	ret = true;
+	
+out:
+	if(peg_fd != -1) {
+		close(peg_fd);
+	}
+	
+	if(!ret) {
+		free(peg_data);
+	}
+	return ret;
 }
 
 
@@ -263,7 +272,7 @@ static bool PegasusServer_parseFromSocket(PegasusLoader* pegload, int sock) {
 	}
 	
 	// Parse the PEGASUS file
-	s = Pegasus_parseFromMemory(peg, peg_data, peg_size);
+	s = Pegasus_parseFromMemory(peg, peg_data, peg_size, true);
 	if(s != PEG_SUCCESS) {
 		fprintf(stderr, "%s\n", PegStatus_toString(s));
 		return false;
@@ -295,7 +304,7 @@ bool PegasusServer_serveWithPlugin(PegPlugin_Init_func* plugin_init) {
 	PegasusLoader_init(&pegload);
 	
 	// Init plugin
-	plugin = plugin_init(&ear, &pegload);
+	plugin = plugin_init(&ear, &pegload, 0, NULL);
 	if(plugin == NULL) {
 		goto cleanup;
 	}
@@ -335,7 +344,7 @@ bool PegasusServer_serveWithPlugin(PegPlugin_Init_func* plugin_init) {
 	success = true;
 	
 cleanup:
-	if(plugin->fn_destroy != NULL) {
+	if(plugin != NULL && plugin->fn_destroy != NULL) {
 		plugin->fn_destroy(plugin);
 	}
 	

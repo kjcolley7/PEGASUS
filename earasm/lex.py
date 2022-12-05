@@ -7,8 +7,8 @@ tokens = (
 	"NG", "PS", "BG", "SE", "SM", "BE", "OD", "EV",
 	
 	# Register names
-	"ZERO", "TMP", "RV", "R3", "R4", "R5", "R6", "R7",
-	"R8", "R9", "FP", "SP", "RA", "RD", "PC", "DPC",
+	"ZERO", "A0", "A1", "A2", "A3", "A4", "A5", "S0",
+	"S1", "S2", "FP", "SP", "RA", "RD", "PC", "DPC",
 	
 	# Real instructions
 	"ADD", "SUB", "MLU", "MLS", "DVU", "DVS", "XOR", "AND",
@@ -30,8 +30,8 @@ tokens = (
 	"LABEL", "NUMBER", "STRING",
 	
 	# Assembler directives
-	"DOTLESTRING", "DOTDB", "DOTDW", "DOTLOC", "DOTSEGMENT",
-	"DOTSCOPE", "DOTEXPORT"
+	"DOTLESTRING", "DOTDB", "DOTDW", "DOTLOC", "DOTALIGN",
+	"DOTSEGMENT", "DOTSCOPE", "DOTEXPORT"
 )
 
 words = {
@@ -54,16 +54,16 @@ words = {
 	
 	# Register names and their aliases
 	"R0": "ZERO", "ZERO": "ZERO",
-	"R1": "TMP", "TMP": "TMP",
-	"R2": "RV", "RV": "RV",
-	"R3": "R3",
-	"R4": "R4",
-	"R5": "R5",
-	"R6": "R6",
-	"R7": "R7",
-	"R8": "R8",
-	"R9": "R9",
-	"R10": "FP", "FP": "FP",
+	"R1": "A0", "A0": "A0",
+	"R2": "A1", "RV": "A1", "A1": "A1",
+	"R3": "A2", "RVX": "A2", "A2": "A2",
+	"R4": "A3", "A3": "A3",
+	"R5": "A4", "A4": "A4",
+	"R6": "A5", "A5": "A5",
+	"R7": "S0", "S0": "S0",
+	"R8": "S1", "S1": "S1",
+	"R9": "S2", "S2": "S2",
+	"R10": "FP", "S3": "FP", "FP": "FP",
 	"R11": "SP", "SP": "SP",
 	"R12": "RA", "RA": "RA",
 	"R13": "RD", "RD": "RD",
@@ -159,7 +159,7 @@ def t_LABEL(t):
 
 # Literal numbers
 def t_NUMBER(t):
-	r'''([1-9]\d*|0(x[a-fA-F0-9]+|b[01]+|o[0-7]+)?|'[^']'|'\\['0afvtrn]')'''
+	r'''([1-9]\d*|0(x[a-fA-F0-9]+|b[01]+|o[0-7]+)?|'[^']'|'\\[\\'0afvtrn]')'''
 	
 	sign = 1
 	s = t.value
@@ -175,7 +175,7 @@ def t_NUMBER(t):
 		t.value = int(s[2:], 8)
 	elif s.startswith("'"):
 		if s[1] == '\\':
-			t.value = ord("'\0\a\f\v\t\r\n"["'0afvtrn".index(s[2])])
+			t.value = ord("\\'\0\a\f\v\t\r\n"["\\'0afvtrn".index(s[2])])
 		else:
 			t.value = ord(s[1])
 	else:
@@ -207,6 +207,7 @@ t_DOTLESTRING = r'\.lestring'
 t_DOTDB = r'\.db'
 t_DOTDW = r'\.dw'
 t_DOTLOC = r'\.loc'
+t_DOTALIGN = r'\.align'
 t_DOTSEGMENT = r'\.segment'
 t_DOTSCOPE = r'\.scope'
 t_DOTEXPORT = r'\.export'

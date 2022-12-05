@@ -10,7 +10,6 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/mman.h>
 #include "common/dynamic_string.h"
 
 
@@ -73,48 +72,53 @@ Pegasus* Pegasus_new(void) {
 }
 
 
-/*! Parse a pegasus file from the given file path.
+/*!
+ * @brief Parse a pegasus file from the given file path.
+ * 
  * @param filename Path to the pegasus file to load
  */
 PegStatus Pegasus_parseFromFile(Pegasus* self, const char* filename) {
 	PegStatus s = PEG_SUCCESS;
 	int fd = -1;
-	void* map = MAP_FAILED;
-	size_t file_size = 0;
+	dynamic_array(char) file_data = {0};
+	char read_buf[256];
+	ssize_t bytes_read = 0;
 	
-	// Open file descriptor to pegasus file
-	fd = open(filename, O_RDONLY);
-	if(fd < 0) {
-		s = PEG_IO_ERROR;
-		goto cleanup;
+	// Normal filename
+	if(fd == -1) {
+		fd = open(filename, O_RDONLY);
+		if(fd < 0) {
+			s = PEG_IO_ERROR;
+			goto cleanup;
+		}
 	}
 	
-	// Determine size of pegasus file
-	file_size = (size_t)lseek(fd, 0, SEEK_END);
-	
-	// Map pegasus file into memory
-	map = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FILE, fd, 0);
-	if(map == MAP_FAILED) {
-		s = PEG_MAP_ERROR;
-		goto cleanup;
+	while(true) {
+		bytes_read = read(fd, read_buf, sizeof(read_buf));
+		if(bytes_read < 0) {
+			s = PEG_IO_ERROR;
+			goto cleanup;
+		}
+		else if(bytes_read == 0) {
+			break;
+		}
+		
+		array_extend(&file_data, read_buf, bytes_read);
 	}
+	
+	array_shrink(&file_data);
 	
 	// Parse pegasus file
-	s = Pegasus_parseFromMemory(self, map, file_size);
+	s = Pegasus_parseFromMemory(self, file_data.elems, file_data.count, true);
 	if(s != PEG_SUCCESS) {
+		array_clear(&file_data);
 		goto cleanup;
 	}
 	
-	// Success, so skip cleanup
-	self->peg_fd = fd;
-	map = MAP_FAILED;
-	fd = -1;
+	// When the above succeeds, the Pegasus object takes ownership of the
+	// memory allocated for file_data. Therefore, don't array_clear() it.
 	
 cleanup:
-	if(map != MAP_FAILED) {
-		munmap(map, file_size);
-	}
-	
 	if(fd != -1) {
 		close(fd);
 	}
@@ -123,25 +127,35 @@ cleanup:
 }
 
 
-/*! Parse a pegasus file loaded into memory.
+/*!
+ * @brief Parse a pegasus file loaded into memory.
+ * 
  * @param data Pointer to the beginning of the PEGASUS file data
  * @param size Number of bytes in the PEGASUS file data
+ * @param shouldFree True if free() should be called on the data pointer
+ *                   when the Pegasus object is destructed
  */
-PegStatus Pegasus_parseFromMemory(Pegasus* self, void* data, size_t size) {
+PegStatus Pegasus_parseFromMemory(Pegasus* self, void* data, size_t size, bool shouldFree) {
 	if(!data) {
 		return PEG_INVALID_PARAMETER;
 	}
 	
+	if(self->should_free) {
+		destroy(&self->peg_data);
+	}
+	
 	memset(self, 0, sizeof(*self));
-	self->peg_fd = -1;
-	self->peg_size = size;
 	self->peg_data = data;
+	self->peg_size = size;
+	self->should_free = shouldFree;
 	
 	return Pegasus_parse(self);
 }
 
 
-/*! Seek to a specific position in an opened PEGASUS file.
+/*!
+ * @brief Seek to a specific position in an opened PEGASUS file.
+ * 
  * @param offset Signed offset in bytes from the seek position
  * @param whence One of SEEK_SET, SEEK_CUR, or SEEK_END, with the same semantics as fseek
  * @return True if the seek was successful, or false otherwise
@@ -187,8 +201,10 @@ bool Pegasus_seek(Pegasus* self, ssize_t offset, int whence) {
 }
 
 
-/*! Attempt to read a specific number of bytes from the current seek position in
- * an opened PEGASUS file.
+/*!
+ * @brief Attempt to read a specific number of bytes from the current seek position in
+ *        an opened PEGASUS file.
+ * 
  * @param data Pointer to where the data from the PEGASUS file should be written
  * @param nbytes Number of bytes that should be read from the PEGASUS file
  * @return True if the data was successfully read, or false otherwise
@@ -204,8 +220,10 @@ bool Pegasus_read(Pegasus* self, void* data, size_t nbytes) {
 }
 
 
-/*! Attempt to write a specific number of bytes to the current seek position in
- * an opened PEGASUS file.
+/*!
+ * @brief Attempt to write a specific number of bytes to the current seek position in
+ *        an opened PEGASUS file.
+ * 
  * @note This will only affect the in-memory contents of the PEGASUS file, not the contents on disk.
  * @param data Source pointer where data should be copied from
  * @param nbytes Number of bytes to copy from the input into the loaded PEGASUS file contents
@@ -393,16 +411,8 @@ void Pegasus_destroy(Pegasus** pself) {
 	array_clear(&self->entrypoints);
 	array_clear(&self->relocs);
 	
-	if(self->peg_fd != -1) {
-		void* map = (void*)self->peg_data;
-		if(map != MAP_FAILED) {
-			munmap(map, self->peg_size);
-			self->peg_data = MAP_FAILED;
-			self->peg_size = 0;
-		}
-		
-		close(self->peg_fd);
-		self->peg_fd = -1;
+	if(self->should_free) {
+		destroy(&self->peg_data);
 	}
 	
 	destroy(&self);

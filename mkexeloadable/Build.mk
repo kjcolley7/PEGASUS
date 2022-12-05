@@ -1,3 +1,5 @@
+ifdef IS_LINUX
+
 TARGET := mkexeloadable
 PRODUCT := $(PEG_BIN)/$(TARGET)
 
@@ -8,3 +10,5 @@ RELRO := 1
 NX := 1
 CANARY := 1
 DEBUG := 1
+
+endif #IS_LINUX

@@ -3,7 +3,12 @@ PRODUCT := $(PEG_BIN)/$(TARGET)
 
 LIBS := $(PEG_BIN)/libpegasus_ear.so
 
-CFLAGS := -Wall -Wextra -Wno-format-truncation -I$(PEG_DIR)
+CFLAGS := -Wall -Wextra -I$(PEG_DIR)
+
+ifeq "$(CC)" "gcc"
+CFLAGS := $(CFLAGS) -Wno-format-truncation
+endif
+
 BITS := 64
 ASLR := 1
 RELRO := 1

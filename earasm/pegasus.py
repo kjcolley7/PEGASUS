@@ -110,21 +110,22 @@ class Pegasus_Entrypoint(Pegasus_Cmd):
 	"""
 	// cmd_type = 2
 	struct Pegasus_Entrypoint: Pegasus_Cmd {
-		uint16_t RV, R3, R4, R5, R6, R7, PC, DPC;
+		uint16_t A0, A1, A2, A3, A4, A5, PC, DPC;
 	};
 	"""
 	
-	REGISTERS = ["R2", "R3", "R4", "R5", "R6", "R7", "R14", "R15"]
-	REGMAP = {name: index for index, name in enumerate(REGISTERS)}
-	
-	# Add aliases for RV, PC, DPC
-	REGMAP["RV"] = REGMAP["R2"]
-	REGMAP["PC"] = REGMAP["R14"]
-	REGMAP["DPC"] = REGMAP["R15"]
+	REGISTERS = ["A0", "A1", "A2", "A3", "A4", "A5", "PC", "DPC"]
+	REGMAP = {}
+	for name, num in REGISTER_NUMBERS.items():
+		reg = REGISTER_NAMES[num]
+		try:
+			REGMAP[name] = REGISTERS.index(reg)
+		except ValueError:
+			pass
 	
 	def __init__(self, **kwargs):
 		self.registers = [0] * len(self.REGISTERS)
-		self.set_regs(R7=0xEA2A)
+		self.set_regs(A5=0xEA2A)
 		self.set_regs(**kwargs)
 		self.foff = None
 	

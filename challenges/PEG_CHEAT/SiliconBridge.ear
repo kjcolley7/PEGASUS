@@ -1,0 +1,710 @@
+/*
+void print(
+	const char* s //A0
+) {
+	if(s == NULL) {
+		return;
+	}
+	
+	char byte;         //R2
+	u16 c;             //R3
+	u16 ascii = 0x7f;  //R4
+	do {
+		byte = *s++;
+		c = byte & ascii;
+		WRB(c);
+	} while(byte != c);
+}
+*/
+.scope
+.export @print
+@print: //LEAF
+	MOV     A0, A0                 // NULL check (more lightweight than CMP)
+	RET.EQ                         // Return if NULL
+	
+	MOV     R4, 0x7f               // Create mask for the ASCII character bits
+	
+@.next_char:
+	LDB     R2, [A0]               // Load character from string
+	INC     A0                     // Increment string pointer
+	AND     R3, R2, R4             // Mask off the continuation bit
+	WRB     R3                     // Write ASCII character
+	CMP     R2, R3                 // Check for continuation bit
+	BRR.NE  @.next_char            // Continuation bit was set, keep iterating through the string
+	
+	RET
+
+
+/*
+int read_line(char* buffer, size_t size) {
+	int value;
+	int bytes_read = 0;
+	
+	while(bytes_read < size && (value = port_read(stdio)) != EOF) {
+		++bytes_read;
+		*buffer++ = value;
+		
+		if(value == '\n') {
+			break;
+		}
+	}
+	
+	return bytes_read;
+}
+*/
+.scope
+.export @read_line
+
+// A0 = buffer
+// A1 = size
+// A2 = bytes_read
+// A3 = value
+@read_line: //LEAF
+	// bytes_read = 0;
+	MOV     A2, ZERO
+	BRR     @.while_cond
+	
+@.while_body:
+	/*
+	++bytes_read;
+	*buffer++ = value;
+	
+	if(value == '\n') {
+		break;
+	}
+	*/
+	INC     A2
+	STB     [A0], A3
+	INC     A0
+	CMP     A3, '\n'
+	MOVN.EQ RV, A2
+	RET.EQ
+	
+	
+@.while_cond:
+	// bytes_read < size
+	CMP     A2, A1
+	MOVN.GE RV, A2
+	RET.GE
+	
+	// (value = port_read(stdio)) != EOF
+	RDB     A3
+	BRR.CC  @.while_body
+	
+	// return bytes_read
+	MOV     RV, A2
+	RET
+
+
+/*
+void give_flag(void) {
+	char c;
+	while(rdb(FLAG_PORT, &c)) {
+		wrb(c);
+	}
+}
+*/
+.scope
+.export @give_flag
+@give_flag:
+	PSH     {R1, RA, RD}
+	
+@.next_char:
+	RDB     R1, (0xF)
+	WRBN.CC R1
+	BRR.CC  @.next_char
+	
+	POP     {R1, PC, DPC}
+
+
+/*
+int next_bridge_pos = 0
+const int NUM_PANELS = 15
+const int BRIDGE_CORRECT = 0b011010111101000
+
+@PATCH_BEGIN = @@
+void show_bridge(void) {
+	// Draw finish platform
+	print(" _______ ")
+	print("|# # # #|")
+	print("| # # # |")
+	print("|# # # #|")
+	print("|_______|")
+	
+	// Draw upcoming panels
+	for(i = NUM_PANELS; i >= next_bridge_pos; i--) {
+		print("|   |   |")
+		print("|[ ]|[ ]|")
+	}
+	
+	// Draw player position
+	if(next_bridge_pos != 0) {
+		// Must be in the correct spot
+		print("|   |   |")
+		if(BRIDGE_CORRECT & (1 << i)) {
+			// Right is correct, left is shattered
+			print("|[/]|[@]|")
+		}
+		else {
+			// Left is correct, right is shattered
+			print("|[@]|[/]|")
+		}
+		
+		// Draw panels behind
+		for(i = next_bridge_pos - 1; i >= 0; i--) {
+			print("|   |   |")
+			
+			if(BRIDGE_CORRECT & (1 << i)) {
+				// Right is correct, left is shattered
+				print("|[/]|[$]|")
+			}
+			else {
+				// Left is correct, right is shattered
+				print("|[$]|[/]|")
+			}
+		}
+	}
+	
+	// Draw starting platform
+	print("|   |   |")
+	print("|___|___|")
+	
+	// Is player still on the starting platform?
+	if(next_bridge_pos == 0) {
+		print("|   @   |")
+	}
+	else {
+		print("|       |")
+	}
+	
+	print("|_______|")
+}
+*/
+.segment @DATA
+@next_bridge_pos:
+	.dw 0
+
+.segment @TEXT
+.align 2
+@NUM_PANELS:
+	.dw 15
+@BRIDGE_CORRECT:
+	.dw 0b011010111101000
+
+.scope
+.export @show_bridge
+
+@.str_finish:
+	.lestring " _______ \n" +
+	          "|# # # #|\n" +
+	          "| # # # |\n" +
+	          "|# # # #|\n" +
+	          "|_______|\n"
+
+@.str_unvisited:
+	.lestring "|   |   |\n" +
+	          "|[ ]|[ ]|\n"
+
+@.str_gap:
+	.lestring "|   |   |\n"
+
+@.str_on_right:
+	.lestring "|[/]|[@]|\n"
+
+@.str_on_left:
+	.lestring "|[@]|[/]|\n"
+
+@.str_right_correct:
+	.lestring "|[/]|[$]|\n"
+
+@.str_left_correct:
+	.lestring "|[$]|[/]|\n"
+
+@.str_start_top:
+	.lestring "|   |   |\n" +
+	          "|___|___|\n"
+
+@.str_start_middle_player:
+	.lestring "|   @   |\n"
+
+@.str_start_middle_empty:
+	.lestring "|       |\n"
+
+@.str_start_bottom:
+	.lestring "|_______|\n"
+
+
+.export @PATCH_BEGIN
+@PATCH_BEGIN:
+
+@show_bridge:
+	PSH     {S0-S2, RA, RD}
+	
+	MOV     S2, 1
+	
+	// next_bridge_pos stored in S1
+	ADR     S1, @next_bridge_pos
+	LDW     S1, [S1]
+	
+	// Draw finish platform
+	ADR     A0, @.str_finish
+	FCR     @print
+	
+	// i stored in S0
+	ADR     S0, @NUM_PANELS
+	LDW     S0, [S0]
+	DEC     S0
+	
+	BRR     @.draw_upcoming_for_cond
+	
+	// Draw upcoming panels
+@.draw_upcoming_loop:
+	ADR     A0, @.str_unvisited
+	FCR     @print
+	DEC     S0
+	
+@.draw_upcoming_for_cond:
+	CMP     S0, S1
+	BRR.BE  @.draw_upcoming_loop
+	
+	// Draw player position
+	MOVY    S0, S0
+	BRR.NG  @.draw_start_platform
+	
+	// Must be in the correct spot
+	ADR     A0, @.str_gap
+	FCR     @print
+	
+	// Print player on right or left, and other panel is shattered
+	ADR     A5, @BRIDGE_CORRECT
+	LDW     A5, [A5]
+	SHL     A4, S2, S0
+	ANDY    A5, A4
+	ADRN.NZ A0, @.str_on_right
+	ADR.ZR  A0, @.str_on_left
+	FCR     @print
+	
+	// Draw panels behind
+	DECY    S0
+	BRR.NG  @.draw_start_platform
+	
+@.draw_behind_loop:
+	ADR     A0, @.str_gap
+	FCR     @print
+	
+	// Draw one panel cracked, the other correct
+	ADR     A5, @BRIDGE_CORRECT
+	LDW     A5, [A5]
+	SHL     A4, S2, S0
+	ANDY    A5, A4
+	ADRN.NZ A0, @.str_right_correct
+	ADR.ZR  A0, @.str_left_correct
+	FCR     @print
+	
+	DECY    S0
+	BRR.PS  @.draw_behind_loop
+	
+@.draw_start_platform:
+	ADR     A0, @.str_start_top
+	FCR     @print
+	
+	MOVY    S1, S1
+	ADRN.ZR A0, @.str_start_middle_player
+	ADR.NZ  A0, @.str_start_middle_empty
+	FCR     @print
+	
+	ADR     A0, @.str_start_bottom
+	FCR     @print
+	
+	POP     {S0-S2, PC, DPC}
+
+/*
+void bridge_game(void) {
+	print("Welcome to the Silicon Bridge game!")
+	
+	for i in range(NUM_PANELS):
+		show_bridge()
+		print("Pick a silicon panel to jump forwards to. [L/R]?")
+		
+		side = getchar() & ~0x20
+		
+		if side == 'L':
+			side = 0
+		elif side == 'R':
+			side = 1
+		else:
+			exit()
+		
+		if getchar() != '\n':
+			exit()
+		
+		if (BRIDGE_CORRECT >> i) & 1 != side:
+			break
+		
+		next_bridge_pos++
+	
+	if i <= NUM_PANELS:
+		print("/You Died/")
+		exit()
+	
+	print("You Win!")
+	give_flag()
+}
+@PATCH_END = @@
+*/
+.scope
+.export @bridge_game
+
+@.str_welcome:
+	.lestring "Welcome to the Silicon Bridge game!\n"
+
+@.str_prompt_choice:
+	.lestring "Pick a silicon panel to jump forwards to. [L/R]?\n"
+
+@.str_you_died:
+	.lestring "/You Died/\n"
+
+@.str_you_win:
+	.lestring "You Win!\n"
+
+@bridge_game:
+	PSH     {S0-S1, RA, RD}
+	
+	ADR     A0, @.str_welcome
+	FCR     @print
+	
+	MOV     S0, ZERO
+	ADR     S1, @NUM_PANELS
+	LDW     S1, [S1]
+	BRR     @.panel_loop_cond
+	
+@.panel_loop:
+	FCR     @show_bridge
+	ADR     A0, @.str_prompt_choice
+	FCR     @print
+	RDB     A1
+	HLT.CS
+	
+	CMP     A1, 'L'
+	MOVN.EQ A1, ZERO
+	BRR.EQ  @.picked_side
+	CMP     A1, 'R'
+	HLT.NE
+	MOV     A1, 1
+	
+@.picked_side:
+	RDB     A2
+	HLT.CS
+	CMP     A2, '\n'
+	HLT.NE
+	
+	ADR     A2, @BRIDGE_CORRECT
+	LDW     A2, [A2]
+	SRU     A2, S0
+	AND     A2, 1
+	CMP     A2, A1
+	BRR.NE  @.panel_loop_exit
+	
+	// next_bridge_pos++
+	ADR     A3, @next_bridge_pos
+	LDW     A4, [A3]
+	INC     A4
+	STW     [A3], A4
+	
+	// i++
+	INC     S0
+	
+@.panel_loop_cond:
+	CMP     S0, S1
+	BRR.LT  @.panel_loop
+	
+@.panel_loop_exit:
+	CMP     S0, S1
+	
+	// This branch instruction intentionally uses the incorrect condition code.
+	// It should be BRR.GE or even BRR.EQ, as it's expected that at the end of
+	// the bridge, i == NUM_PANELS. This intentional bug makes it impossible to
+	// beat the silicion bridge game without cheating.
+	BRR.GT  @.you_win
+	
+	ADR     A0, @.str_you_died
+	FCR     @print
+	
+.export @PATCH_END
+@PATCH_END:
+	
+	// Extra halts to prevent the instructions from being combined
+	HLT
+	HLT
+	HLT
+	
+@.you_win:
+	ADR     A0, @.str_you_win
+	FCR     @print
+	FCR     @give_flag
+	
+	POP     {S0-S1, PC, DPC}
+
+
+/*
+void patch_code_byte(uint8_t* code_addr, uint8_t byte) {
+	if(code_addr < PATCH_BEGIN || code_addr >= PATCH_END) {
+		print("Address is outside of the patchable region!")
+		exit()
+	}
+	
+	uint8_t patch_vpn = code_addr >> 8
+	char* EAR_TTB_VADDR = 0xFC00
+	
+	EAR_TTE* patch_tte = EAR_TTB_VADDR + (patch_vpn << 2)
+	
+	// Set the write page to the execute page to make it RWX
+	patch_tte->w_ppn = patch_tte->x_ppn
+	
+	*code_addr = byte
+}
+*/
+.scope
+.export @patch_code_byte
+@patch_code_byte:
+	PSH     {RA, RD}
+	
+	// Make sure the address to patch is within the allowed patch range
+	CMP     A0, @PATCH_BEGIN
+	BRR.LT  @.bad_addr
+	CMP     A0, @PATCH_END
+	BRR.GE  @.bad_addr
+	
+	// A2 = &patch_tte->x_ppn
+	SRU     A2, A0, 8
+	SHL     A2, 2
+	ADD     A2, 0xFC02
+	
+	// patch_tte->w_ppn = patch_tte->x_ppn
+	LDB     A3, [A2]
+	DEC     A2
+	STB     [A2], A3
+	
+	// *code_addr = byte
+	STB     [A0], A1
+	
+	// Intentionally leave the target page as RWX, in case any clever
+	// solutions further modify the code
+	POP     {PC, DPC}
+
+@.str_bad_addr:
+	.lestring "Address is outside of the patchable region!\n"
+
+@.bad_addr:
+	ADR     A0, @.str_bad_addr
+	FCR     @print
+	HLT
+
+
+/*
+void h2i(char h) {
+	if(h >= '0' && h <= '9') {
+		return h - '0'
+	}
+	
+	h |= 0x20
+	if(h >= 'a' && h <= 'f') {
+		return h - 'a' + 0xa
+	}
+	
+	exit()
+}
+*/
+.scope
+.export @h2i
+@h2i: //LEAF
+	CMP     A0, '0'
+	HLT.LT
+	CMP     A0, '9'
+	SUBN.LE RV, A0, '0'
+	RET.LE
+	
+	ORR     A0, 0x20
+	CMP     A0, 'a'
+	HLT.LT
+	CMP     A0, 'f'
+	SUBN.LE RV, A0, 'a' - 0xA
+	RET.LE
+	
+	HLT
+
+
+/*
+int cmp_lestring_str(lestring* lestr, char* str) {
+	char lc;
+	char sc;
+	
+	while(true) {
+		lc = *lestr++;
+		sc = *str++;
+		
+		if(!(lc & 0x80)) {
+			break;
+		}
+		
+		lc &= ~0x80;
+		char diff = lc - sc;
+		if(diff) {
+			return diff;
+		}
+	}
+	
+	return lc - sc;
+}
+*/
+.scope
+// .export @cmp_lestring_str
+
+// A0 = lestr
+// A1 = str
+// A2 = lc
+// A3 = sc
+// A4 = diff
+@cmp_lestring_str: //LEAF
+@.loop:
+	LDB     A2, [A0]
+	INC     A0
+	LDB     A3, [A1]
+	INC     A1
+	
+	ANDY    ZERO, A2, 0x80
+	BRR.ZR  @.break
+	
+	AND     A2, ~0x80
+	SUBY    A2, A3
+	BRR.ZR  @.loop
+	
+	MOV     RV, A2
+	RET
+	
+@.break:
+	SUB     RV, A2, A3
+	RET
+
+
+/*
+void main() {
+	char buffer[11];
+	
+	print("Enter cheat code?")
+	read_line(buffer, sizeof(buffer))
+	
+	if(cmp_lestring_str("UUDDLRLRBA\n", buffer) == 0) {
+		print("Address to patch?")
+		h4 = getchar()
+		h3 = getchar()
+		h2 = getchar()
+		h1 = getchar()
+		addr = h4 << 12
+		addr |= h3 << 8
+		addr |= h2 << 4
+		addr |= h1
+		
+		print("Byte to replace with?")
+		b2 = getchar()
+		b1 = getchar()
+		byte = b2 << 4
+		byte |= b1
+		
+		patch_code_byte(addr, byte)
+	}
+	
+	bridge_game()
+}
+*/
+.scope
+.export @main
+
+@.str_prompt_cheat:
+	.lestring "Enter cheat code?\n"
+
+@.str_cheat_code:
+	.lestring "UUDDLRLRBA\n"
+
+@.str_prompt_addr:
+	.lestring "Address to patch?\n"
+
+@.str_prompt_byte:
+	.lestring "Byte to replace with?\n"
+
+// SP = buffer
+// S0 = addr
+// S1 = byte
+@main:
+	MOV     FP, SP
+	SUB     SP, 12 //keep aligned by 2
+	
+	ADR     A0, @.str_prompt_cheat
+	FCR     @print
+	
+	MOV     A0, SP
+	MOV     A1, 11
+	FCR     @read_line
+	
+	ADR     A0, @.str_cheat_code
+	MOV     A1, SP
+	FCR     @cmp_lestring_str
+	
+	MOVY    RV, RV
+	BRR.NZ  @.play_game
+	
+	ADR     A0, @.str_prompt_addr
+	FCR     @print
+	
+	RDB     A0
+	HLT.CS
+	FCR     @h2i
+	MOV     S0, RV
+	
+	RDB     A0
+	HLT.CS
+	FCR     @h2i
+	SHL     S0, 4
+	ORR     S0, RV
+	
+	RDB     A0
+	HLT.CS
+	FCR     @h2i
+	SHL     S0, 4
+	ORR     S0, RV
+	
+	RDB     A0
+	HLT.CS
+	FCR     @h2i
+	SHL     S0, 4
+	ORR     S0, RV
+	
+	RDB     A0
+	CMP     A0, '\n'
+	HLT.NE
+	
+	ADR     A0, @.str_prompt_byte
+	FCR     @print
+	
+	RDB     A0
+	HLT.CS
+	FCR     @h2i
+	MOV     S1, RV
+	
+	RDB     A0
+	HLT.CS
+	FCR     @h2i
+	SHL     S1, 4
+	ORR     S1, RV
+	
+	RDB     A0
+	CMP     A0, '\n'
+	HLT.NE
+	
+	MOV     A0, S0
+	MOV     A1, S1
+	FCR     @patch_code_byte
+	
+@.play_game:
+	FCR     @bridge_game
+	HLT

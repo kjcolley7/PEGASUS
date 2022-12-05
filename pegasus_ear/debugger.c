@@ -14,9 +14,14 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "utils.h"
 #include "common/dynamic_array.h"
 #include "common/dynamic_string.h"
 #include "linenoise/linenoise.h"
+#include "ansi_colors.h"
+
+
+#define LINE_HINT_MAX 500
 
 
 typedef enum BreakpointState {
@@ -38,6 +43,11 @@ typedef struct Debugger {
 } Debugger;
 
 
+static EAR_HaltReason Debugger_cbAttach(void* cookie) {
+	return Debugger_run(cookie);
+}
+
+
 /*!
  * @brief Initializes a debugger that will control the provided EAR processor.
  * 
@@ -52,14 +62,18 @@ Debugger* Debugger_init(EAR* cpu) {
 	
 	dbg->cpu = cpu;
 	dbg->r = HALT_NONE;
+	
+	EAR_attachDebugger(dbg->cpu, &Debugger_cbAttach, dbg);
 	return dbg;
 }
+
 
 /*! Destroys a debugger object that was previously created using `Debugger_init`. */
 void Debugger_destroy(Debugger* dbg) {
 	array_clear(&dbg->breakpoints);
 	free(dbg);
 }
+
 
 /*!
  * @brief Registers a hardware breakpoint.
@@ -86,6 +100,7 @@ BreakpointID Debugger_addBreakpoint(Debugger* dbg, EAR_Size addr, EAR_Protection
 	return (BreakpointID)(dbg->breakpoints.count - 1);
 }
 
+
 /*!
  * @brief Checks whether a breakpoint with the provided ID exists.
  * 
@@ -100,6 +115,7 @@ static bool Debugger_breakpointExists(Debugger* dbg, BreakpointID bpid) {
 	return dbg->breakpoints.elems[bpid].state != BP_UNUSED;
 }
 
+
 /*!
  * @brief Temporarily disables a registered breakpoint.
  * 
@@ -113,6 +129,7 @@ void Debugger_disableBreakpoint(Debugger* dbg, BreakpointID bpid) {
 	dbg->breakpoints.elems[bpid].state = BP_DISABLED;
 }
 
+
 /*!
  * @brief Enables a previously disabled breakpoint.
  * 
@@ -125,6 +142,7 @@ void Debugger_enableBreakpoint(Debugger* dbg, BreakpointID bpid) {
 	
 	dbg->breakpoints.elems[bpid].state = BP_ENABLED;
 }
+
 
 /*!
  * @brief Toggles whether the target breakpoint is enabled or disabled.
@@ -147,6 +165,7 @@ bool Debugger_toggleBreakpoint(Debugger* dbg, BreakpointID bpid) {
 	return true;
 }
 
+
 /*!
  * @brief Removes a breakpoint so that its ID may be reused.
  * 
@@ -160,12 +179,21 @@ void Debugger_removeBreakpoint(Debugger* dbg, BreakpointID bpid) {
 	dbg->breakpoints.elems[bpid].state = BP_UNUSED;
 }
 
+
 /*! Clear all registered breakpoints. */
 void Debugger_clearBreakpoints(Debugger* dbg) {
 	array_clear(&dbg->breakpoints);
 }
 
-static EAR_HaltReason Debugger_cbUnhandledFault(void* cookie, EAR_Size vmaddr, EAR_Protection prot, EAR_TTE* tte, EAR_HaltReason faultReason, EAR_Size* out_paddr) {
+
+static EAR_HaltReason Debugger_cbUnhandledFault(
+	void* cookie,
+	EAR_Size vmaddr,
+	EAR_Protection prot,
+	EAR_TTE* tte,
+	EAR_HaltReason faultReason,
+	EAR_Size* out_paddr
+) {
 	Debugger* dbg = cookie;
 	(void)dbg;
 	(void)tte;
@@ -192,6 +220,7 @@ static EAR_HaltReason Debugger_cbUnhandledFault(void* cookie, EAR_Size vmaddr, E
 	fprintf(stderr, "%s violation at 0x%04X\n", accessMode, vmaddr);
 	return faultReason;
 }
+
 
 static EAR_HaltReason Debugger_cbMemAccess(void* cookie, EAR_Size vmaddr, EAR_Protection prot, EAR_Size size, void* data) {
 	Debugger* dbg = cookie;
@@ -245,6 +274,7 @@ static void Debugger_register(Debugger* dbg) {
 	EAR_setMemoryHook(dbg->cpu, &Debugger_cbMemAccess, dbg);
 }
 
+
 static void Debugger_unregister(Debugger* dbg) {
 	dbg->cpu->debug_flags &= ~DEBUG_ACTIVE;
 	
@@ -269,33 +299,97 @@ typedef enum CMD_TYPE {
 	CMD_COUNT //!< Number of command types
 } CMDTYPE;
 
+typedef struct CommandArgsHints CommandArgsHints;
+struct CommandArgsHints {
+	const char* arghint;
+	bool optional;
+	CommandArgsHints* nextarg;
+};
+
 typedef struct CommandMapEntry {
 	const char* name;
 	CMDTYPE type;
-	const char* hint;
+	CommandArgsHints* hints;
 } CommandMapEntry;
 
+// <addr>
+static CommandArgsHints hnt_addr = {
+	"addr", false, NULL
+};
+
+// <r/w/x>
+static CommandArgsHints hnt_prot_addr = {
+	"r/w/x", false, &hnt_addr
+};
+
+// <breakpoint id>
+static CommandArgsHints hnt_bpid = {
+	"breakpoint id", false, NULL
+};
+
+// <subcommand or addr>
+static CommandArgsHints hnt_subcommand_or_addr = {
+	"subcommand or addr", false, NULL
+};
+
+// [<dpc=DPC>]
+static CommandArgsHints hnt_dpc = {
+	"dpc=DPC", true, NULL
+};
+
+// [<addr=PC> [<dpc=DPC>]]
+static CommandArgsHints hnt_addr_dpc = {
+	"addr=PC", true, &hnt_dpc
+};
+
+// [<count=5> [<addr=PC> [<dpc=DPC>]]]
+static CommandArgsHints hnt_count_addr_dpc = {
+	"count=5", true, &hnt_addr_dpc
+};
+
+// [<command or category>]
+static CommandArgsHints hnt_command_or_category = {
+	"command or category", true, NULL
+};
+
+// <size>
+static CommandArgsHints hnt_size = {
+	"size", false, NULL
+};
+
+// <addr> <size>
+static CommandArgsHints hnt_addr_size = {
+	"addr", false, &hnt_size
+};
+
+// <r/w/x/p> <addr> <size>
+static CommandArgsHints hnt_prot_addr_size = {
+	"r/w/x/p", false, &hnt_addr_size
+};
+
+// This must remain sorted (according to strncasecmp)
 static CommandMapEntry cmd_map[] = {
-	{"b",           CMD_BREAKPOINT, " <addr>"},
-	{"ba",          CMD_BREAKPOINT, " <r/w/x> <addr>"},
-	{"bd",          CMD_BREAKPOINT, " <breakpoint id>"},
-	{"be",          CMD_BREAKPOINT, " <breakpoint id>"},
-	{"bp",          CMD_BREAKPOINT, " <subcommand or addr>"},
-	{"break",       CMD_BREAKPOINT, " <subcommand or addr>"},
-	{"breakpoint",  CMD_BREAKPOINT, " <subcommand or addr>"},
+	{"b",           CMD_BREAKPOINT, &hnt_addr},
+	{"ba",          CMD_BREAKPOINT, &hnt_prot_addr},
+	{"bd",          CMD_BREAKPOINT, &hnt_bpid},
+	{"be",          CMD_BREAKPOINT, &hnt_bpid},
+	{"bp",          CMD_BREAKPOINT, &hnt_subcommand_or_addr},
+	{"break",       CMD_BREAKPOINT, &hnt_subcommand_or_addr},
+	{"breakpoint",  CMD_BREAKPOINT, &hnt_subcommand_or_addr},
 	{"c",           CMD_CONTINUE, NULL},
 	{"cont",        CMD_CONTINUE, NULL},
 	{"context",     CMD_CONTEXT, NULL},
 	{"continue",    CMD_CONTINUE, NULL},
 	{"ctx",         CMD_CONTEXT, NULL},
-	{"dis",         CMD_DISASSEMBLE, " [<count=5> [<addr=PC> [<dpc=DPC>]]]"},
-	{"disasm",      CMD_DISASSEMBLE, " [<count=5> [<addr=PC> [<dpc=DPC>]]]"},
-	{"disassemble", CMD_DISASSEMBLE, " [<count=5> [<addr=PC> [<dpc=DPC>]]]"},
+	{"dis",         CMD_DISASSEMBLE, &hnt_count_addr_dpc},
+	{"disasm",      CMD_DISASSEMBLE, &hnt_count_addr_dpc},
+	{"disass",      CMD_DISASSEMBLE, &hnt_count_addr_dpc},
+	{"disassemble", CMD_DISASSEMBLE, &hnt_count_addr_dpc},
 	{"exit",        CMD_QUIT, NULL},
-	{"h",           CMD_HELP, " [<command or category>]"},
-	{"hd",          CMD_HEXDUMP, " <r/w/x/p> <addr> <size>"},
+	{"h",           CMD_HELP, &hnt_command_or_category},
+	{"hd",          CMD_HEXDUMP, &hnt_prot_addr_size},
 	{"help",        CMD_HELP, NULL},
-	{"hexdump",     CMD_HEXDUMP, " <r/w/x/p> <addr> <size>"},
+	{"hexdump",     CMD_HEXDUMP, &hnt_prot_addr_size},
 	{"q",           CMD_QUIT, NULL},
 	{"quit",        CMD_QUIT, NULL},
 	{"r",           CMD_REGISTERS, NULL},
@@ -306,7 +400,7 @@ static CommandMapEntry cmd_map[] = {
 	{"si",          CMD_STEP, NULL},
 	{"step",        CMD_STEP, NULL},
 	{"vmmap",       CMD_VMMAP, NULL},
-	{"xxd",         CMD_HEXDUMP, " <r/w/x/p> <addr> <size>"},
+	{"xxd",         CMD_HEXDUMP, &hnt_prot_addr_size},
 };
 
 
@@ -321,6 +415,7 @@ typedef struct Command {
 static Command* cmd_parse(const char* line);
 static char* cmd_getNextArgument(const char** line);
 static CMDTYPE cmd_getType(const char* cmdstr);
+
 
 static Command* cmd_parse(const char* line) {
 	Command* cmd = calloc(1, sizeof(*cmd));
@@ -353,6 +448,7 @@ static Command* cmd_parse(const char* line) {
 	return cmd;
 }
 
+
 static char* cmd_getNextArgument(const char** line) {
 	// Skip leading spaces
 	while(isspace(**line)) {
@@ -378,6 +474,7 @@ static char* cmd_getNextArgument(const char** line) {
 	// Allocate a copy of the argument
 	return strndup(arg_begin, arg_length);
 }
+
 
 static CMDTYPE cmd_getType(const char* cmdstr) {
 	// Lookup the command string in the command map
@@ -408,6 +505,7 @@ static void Debugger_doContext(Debugger* dbg, Command* cmd);
 static void Debugger_doHelp(Command* cmd);
 
 
+
 static bool prompt_line(const char* prompt, char** out_line) {
 	char* line = linenoise(prompt);
 	if(line == NULL) {
@@ -422,36 +520,189 @@ static bool prompt_line(const char* prompt, char** out_line) {
 	return true;
 }
 
-static int compare_cmd(const void* a, const void* b) {
-	const CommandMapEntry* x = a;
-	const CommandMapEntry* y = b;
+
+typedef bool cmd_foreach_cb(const CommandMapEntry* entry, void* cookie);
+static void dbg_foreach_cmd_with_prefix(const char* prefix, cmd_foreach_cb* cb, void* cookie) {
+	size_t i;
+	for(i = 0; i < ARRAY_COUNT(cmd_map); i++) {
+		if(strncasecmp(prefix, cmd_map[i].name, strlen(prefix)) == 0) {
+			if(!cb(&cmd_map[i], cookie)) {
+				break;
+			}
+		}
+	}
+}
+
+static bool dbg_completion_cb(const CommandMapEntry* entry, void* cookie) {
+	linenoiseCompletions* lc = cookie;
+	linenoiseAddCompletion(lc, entry->name);
+	return true;
+}
+
+static void dbg_completion(const char* buf, linenoiseCompletions* lc) {
+	dbg_foreach_cmd_with_prefix(buf, &dbg_completion_cb, lc);
+}
+
+static bool dbg_cmd_hint_prefix_cb(const CommandMapEntry* entry, void* cookie) {
+	const CommandMapEntry** out_entry = cookie;
+	*out_entry = entry;
+	return false;
+}
+
+static void dbg_build_hint_string_helper(CommandArgsHints* hint, const char* tail, char* dst, size_t dst_size) {
+	// Always put a space before the argument
+	if(dst_size == 0) {
+		return;
+	}
 	
-	return strcasecmp(x->name, y->name);
+	*dst++ = ' ';
+	dst_size--;
+	
+	// Start with the argument description in angled brackets
+	snprintf(dst, dst_size, "<%s>", hint->arghint);
+	if(tail != NULL && tail[0] != '\0') {
+		// Append the subsequent argument descriptions after a space
+		size_t dst_len = strlen(dst);
+		snprintf(&dst[dst_len], dst_size - dst_len, "%s", tail);
+	}
+	
+	// If this part is optional, wrap the whole thing in square brackets
+	if(hint->optional) {
+		size_t hintLen = strlen(dst);
+		if(hintLen + 2 + 1 > dst_size) {
+			hintLen = dst_size - 2 - 1;
+		}
+		memmove(&dst[1], &dst[0], hintLen);
+		dst[0] = '[';
+		dst[1 + hintLen] = ']';
+		dst[1 + hintLen + 1] = '\0';
+	}
+}
+
+static void dbg_build_hint_string(CommandArgsHints* hints, char dst[LINE_HINT_MAX]) {
+	static char tmp[LINE_HINT_MAX];
+	
+	// Initially clear string buffers
+	tmp[0] = '\0';
+	dst[0] = '\0';
+	
+	// Reverse linked list
+	CommandArgsHints* cur = hints;
+	CommandArgsHints* last = NULL;
+	CommandArgsHints* next;
+	int hintsLen = 0;
+	while(cur != NULL) {
+		next = cur->nextarg;
+		cur->nextarg = last;
+		last = cur;
+		cur = next;
+		hintsLen++;
+	}
+	
+	// Each processed node will flip s between 0 and 1. We need to ensure
+	// that the final write happens in dst, not tmp. As the write target
+	// buffer is swapped each time, we only need to consider the odd vs
+	// even list length cases. For odd list lengths (such as 1), the first
+	// array written into will be the same as the last one. So since s will
+	// start at 1 for odd lists, we just need to put dst in index 1 of the
+	// ss array.
+	int s = hintsLen % 2;
+	char* ss[2] = {tmp, dst};
+	
+	// last is now a pointer to the final arg hint
+	cur = last;
+	
+	// Iterate through the reversed linked list
+	while(cur != NULL) {
+		dbg_build_hint_string_helper(cur, ss[!s], ss[s], LINE_HINT_MAX);
+		s = !s;
+		cur = cur->nextarg;
+	}
+	
+	// Reverse linked list (again to undo)
+	cur = last;
+	last = NULL;
+	while(cur != NULL) {
+		next = cur->nextarg;
+		cur->nextarg = last;
+		last = cur;
+		cur = next;
+	}
+	
+	// The last write was into ss[!s] (using the current value of s), which
+	// is guaranteed to be dst.
 }
 
 static char* dbg_hints(const char* buf, int* color, int* bold) {
 	(void)bold;
+	static char s_line[LINE_HINT_MAX];
+	static char s_hint[LINE_HINT_MAX];
 	
-	CommandMapEntry needle;
-	needle.name = buf;
+	// Make a mutable copy of the line buffer
+	strncpy(s_line, buf, sizeof(s_line) - 1);
 	
-	CommandMapEntry* found = bsearch(&needle, cmd_map, ARRAY_COUNT(cmd_map), sizeof(*found), &compare_cmd);
-	if(found == NULL) {
+	// Split the line buffer by (one or more) whitespace characters
+	char* save = NULL;
+	const char* argv0 = strtok_r(s_line, " \t", &save);
+	if(argv0 == NULL) {
 		return NULL;
 	}
 	
-	*color = 35;
-	return (char*)found->hint;
-}
-
-static void dbg_completion(const char* buf, linenoiseCompletions* lc) {
-	size_t i;
-	for(i = 0; i < ARRAY_COUNT(cmd_map); i++) {
-		if(strncasecmp(buf, cmd_map[i].name, strlen(buf)) == 0) {
-			linenoiseAddCompletion(lc, cmd_map[i].name);
+	// Just find and return the first (lexicographically) command w/ matching prefix
+	const CommandMapEntry* entry = NULL;
+	dbg_foreach_cmd_with_prefix(argv0, &dbg_cmd_hint_prefix_cb, &entry);
+	if(entry == NULL) {
+		*color = ANSI_COLOR_BRIGHT_RED;
+		return " <-- INVALID COMMAND";
+	}
+	
+	// If the user is still editing the command name (argv[0]), hint the
+	// first (lexicographically) command with a matching name prefix
+	size_t cmd_len = strlen(argv0);
+	if(cmd_len < strlen(entry->name)) {
+		*color = ANSI_COLOR_MAGENTA;
+		strncpy(s_hint, entry->name + cmd_len, sizeof(s_hint) - 1);
+		return s_hint;
+	}
+	
+	// Need to figure out how many arguments have already been typed out
+	// to know where in the hints list to start
+	int argc;
+	for(argc = 1; ; argc++) {
+		const char* arg = strtok_r(NULL, " \t", &save);
+		if(arg == NULL) {
+			// Not another argument
+			break;
 		}
 	}
+	
+	// Seek in the hints list to the argument currently being edited
+	CommandArgsHints* hintStart = entry->hints;
+	int hintidx;
+	for(hintidx = 1; hintidx < argc; hintidx++) {
+		if(hintStart == NULL) {
+			break;
+		}
+		hintStart = hintStart->nextarg;
+	}
+	
+	// Too many arguments?
+	if(argc > hintidx) {
+		*color = ANSI_COLOR_BRIGHT_RED;
+		return " <-- TOO MANY ARGUMENTS";
+	}
+	
+	// Dynamically build the hint string into the static buffer
+	dbg_build_hint_string(hintStart, s_hint);
+	*color = ANSI_COLOR_MAGENTA;
+	return s_hint;
 }
+
+static void dbg_free_hint(void* hint) {
+	// Don't need to free as we use a static buffer
+	(void)hint;
+}
+
 
 EAR_HaltReason Debugger_run(Debugger* dbg) {
 	char* line = NULL;
@@ -460,6 +711,7 @@ EAR_HaltReason Debugger_run(Debugger* dbg) {
 	
 	linenoiseHistorySetMaxLen(500);
 	linenoiseSetHintsCallback(&dbg_hints);
+	linenoiseSetFreeHintsCallback(&dbg_free_hint);
 	linenoiseSetCompletionCallback(&dbg_completion);
 	
 	Debugger_register(dbg);
@@ -529,12 +781,17 @@ EAR_HaltReason Debugger_run(Debugger* dbg) {
 	}
 	
 	Debugger_unregister(dbg);
-	return CLEAR_SEEN(dbg->r);
+	EAR_HaltReason r = CLEAR_SEEN(dbg->r);
+	if(r == HALT_NONE) {
+		r = HALT_DEBUGGER;
+	}
+	return r;
 	
 #undef MARK_SEEN
 #undef CLEAR_SEEN
 #undef IS_SEEN
 }
+
 
 static int Debugger_perform(Debugger* dbg, Command* cmd) {
 	switch(cmd->type) {
@@ -585,6 +842,7 @@ static int Debugger_perform(Debugger* dbg, Command* cmd) {
 	return 0;
 }
 
+
 static bool Debugger_parseProtection(const char* s, EAR_Protection* out_prot) {
 	EAR_Protection prot = EAR_PROT_NONE;
 	
@@ -622,6 +880,7 @@ static bool Debugger_parseProtection(const char* s, EAR_Protection* out_prot) {
 	return true;
 }
 
+
 static void Debugger_helpBreakpoint(void) {
 	fprintf(stderr,
 		"Available breakpoint commands:\n"
@@ -646,6 +905,7 @@ static void Debugger_helpBreakpoint(void) {
 		return; \
 	} \
 } while(0)
+
 
 static void Debugger_doBreakpoint(Debugger* dbg, Command* cmd) {
 	char* end;
@@ -805,6 +1065,7 @@ static void Debugger_doBreakpoint(Debugger* dbg, Command* cmd) {
 	}
 }
 
+
 static void Debugger_helpRunning(void) {
 	fprintf(
 		stderr,
@@ -822,6 +1083,7 @@ static void Debugger_helpRunning(void) {
 	);
 }
 
+
 static void Debugger_doContinue(Debugger* dbg, Command* cmd) {
 	if(cmd->args.count != 1) {
 		fprintf(stderr, "Wrong argument count for continue\n");
@@ -833,6 +1095,7 @@ static void Debugger_doContinue(Debugger* dbg, Command* cmd) {
 	dbg->r = EAR_continue(dbg->cpu);
 }
 
+
 static void Debugger_doStep(Debugger* dbg, Command* cmd) {
 	if(cmd->args.count != 1) {
 		fprintf(stderr, "Wrong argument count for step\n");
@@ -843,6 +1106,7 @@ static void Debugger_doStep(Debugger* dbg, Command* cmd) {
 	dbg->cpu->debug_flags |= DEBUG_RESUMING;
 	dbg->r = EAR_stepInstruction(dbg->cpu);
 }
+
 
 static void Debugger_doDisassemble(Debugger* dbg, Command* cmd) {
 	EAR_Size disasmAddr = dbg->cpu->active->r[PC];
@@ -896,53 +1160,6 @@ static void Debugger_doDisassemble(Debugger* dbg, Command* cmd) {
 	dbg->cpu->debug_flags &= ~DEBUG_NOFAULT;
 }
 
-static void xxd(const void* data, EAR_Size size, EAR_Size* base_offset) {
-	const uint8_t* bytes = data;
-	EAR_Size offset, byte_idx, col, base;
-	
-	base = base_offset ? *base_offset : 0;
-	
-	for(offset = 0; offset < size; offset += 0x10) {
-		// Offset indicator
-		col = fprintf(stderr, "%04x:", base + offset);
-		
-		// 8 columns of 2 hex encoded bytes
-		for(byte_idx = 0; byte_idx < 0x10 && offset + byte_idx < size; byte_idx++) {
-			if(byte_idx % 2 == 0) {
-				col += fprintf(stderr, " ");
-			}
-			
-			col += fprintf(stderr, "%02x", bytes[offset + byte_idx]);
-		}
-		
-		// Align column up to ASCII view
-		if(col < 47) {
-			fprintf(stderr, "%*s", 47 - col, "");
-		}
-		
-		// ASCII view
-		for(byte_idx = 0; byte_idx < 0x10 && offset + byte_idx < size; byte_idx++) {
-			uint8_t c = bytes[offset + byte_idx];
-			
-			if(0x20 <= c && c <= 0x7e) {
-				// Standard printable ASCII
-				fprintf(stderr, "%c", c);
-			}
-			else {
-				// Don't try to print this character as it isn't easily printable ASCII
-				fprintf(stderr, ".");
-			}
-		}
-		
-		// End of hexdump line
-		fprintf(stderr, "\n");
-	}
-	
-	// Update file position tracker
-	if(base_offset) {
-		*base_offset += size;
-	}
-}
 
 static void Debugger_doHexdump(Debugger* dbg, Command* cmd) {
 	// Syntax: hexdump <access mode (R|W|X|P)> <addr> <size>
@@ -979,7 +1196,6 @@ static void Debugger_doHexdump(Debugger* dbg, Command* cmd) {
 		Debugger_helpRunning();
 		return;
 	}
-	
 	
 	char* end = NULL;
 	EAR_Size addr = (EAR_Size)strtoul(cmd->args.elems[pos++], &end, 0);
@@ -1020,17 +1236,23 @@ static void Debugger_doHexdump(Debugger* dbg, Command* cmd) {
 		// If an exception is raised partway through this copyout, it will return a smaller size.
 		// We don't care what the exception is as it will be printed by the exception handler, so
 		// just update the size to dump to the number of bytes that were actually copied.
+		bool didSetDebugNoFault = dbg->cpu->debug_flags & DEBUG_NOFAULT;
 		dbg->cpu->debug_flags |= DEBUG_NOFAULT;
+		
 		size = EAR_copyout(dbg->cpu, dump, addr, size, prot, NULL);
-		dbg->cpu->debug_flags &= ~DEBUG_NOFAULT;
+		
+		if(didSetDebugNoFault) {
+			dbg->cpu->debug_flags &= ~DEBUG_NOFAULT;
+		}
 	}
 	
-	xxd(dump, size, &addr);
+	ear_xxd(dump, size, &addr, stderr);
 	
 	if(shouldFree) {
 		free(dump);
 	}
 }
+
 
 static void Debugger_doRegisters(Debugger* dbg, Command* cmd) {
 	if(cmd->args.count != 1) {
@@ -1042,6 +1264,7 @@ static void Debugger_doRegisters(Debugger* dbg, Command* cmd) {
 	EAR_writeRegs(dbg->cpu, stderr);
 }
 
+
 static void Debugger_doVMMap(Debugger* dbg, Command* cmd) {
 	if(cmd->args.count != 1) {
 		fprintf(stderr, "Wrong argument count for vmmap\n");
@@ -1052,9 +1275,9 @@ static void Debugger_doVMMap(Debugger* dbg, Command* cmd) {
 	EAR_writeVMMap(dbg->cpu, stderr);
 }
 
+
 static void showContext(EAR* ear) {
 	EAR_writeRegs(ear, stderr);
-	
 	
 	fprintf(stderr, "\nNext instructions:\n");
 	
@@ -1062,6 +1285,7 @@ static void showContext(EAR* ear) {
 	EAR_writeDisassembly(ear, ear->active->r[PC], ear->active->r[DPC], 5, stderr);
 	ear->debug_flags &= ~DEBUG_NOFAULT;
 }
+
 
 static void Debugger_doContext(Debugger* dbg, Command* cmd) {
 	if(cmd->args.count != 1) {
@@ -1072,6 +1296,7 @@ static void Debugger_doContext(Debugger* dbg, Command* cmd) {
 	
 	showContext(dbg->cpu);
 }
+
 
 static void Debugger_doHelp(Command* cmd) {
 	if(cmd->args.count >= 2) {

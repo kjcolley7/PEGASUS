@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+from pwn import *
+
+context.log_level = "warning"
+
+HOST = args.HOST or "localhost"
+
+dbg = remote(HOST, 22701)
+
+dbg.recvuntil("Connect to the PEGASUS session on port ")
+port = int(dbg.recvuntil(" ", drop=True))
+
+dbg.recvuntil("with session ID '")
+session_id = dbg.recvuntil("'.\n", drop=True)
+
+io = remote(HOST, port)
+io.recvuntil("Enter PEGASUS session ID:\n")
+io.sendline(session_id)
+
+dbg.sendline("b 0x0124")
+dbg.sendline("c")
+io.sendline("A" * 100)
+
+s = ""
+try:
+	while True:
+		dbg.recvuntil("(S1)R8: ", timeout=2)
+		c = chr(int(dbg.recvline(), 16))
+		if c == "\n":
+			break
+		s += c
+		dbg.sendline("c")
+except:
+	pass
+
+print(s)

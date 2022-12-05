@@ -53,8 +53,13 @@ static void interrupt_handler(int sig) {
 	g_interrupted = 1;
 }
 
+static bool s_interrupt_handler_enabled = false;
 static struct sigaction old_handler;
 void enable_interrupt_handler(void) {
+	if(s_interrupt_handler_enabled) {
+		return;
+	}
+	
 	g_interrupted = 0;
 	
 	struct sigaction sa;
@@ -62,11 +67,13 @@ void enable_interrupt_handler(void) {
 	sa.sa_handler = &interrupt_handler;
 	
 	sigaction(SIGINT, &sa, &old_handler);
+	s_interrupt_handler_enabled = true;
 }
 
 void disable_interrupt_handler(void) {
-	if(!g_interrupted) {
+	if(s_interrupt_handler_enabled) {
 		sigaction(SIGINT, &old_handler, NULL);
+		s_interrupt_handler_enabled = false;
 	}
 }
 
@@ -83,7 +90,9 @@ static EAR_HaltReason EAR_invokeFaultHandler(EAR* ear, EAR_Size fault_handler, E
 	EAR_HaltReason ret = HALT_NONE;
 	
 	// Zero-initialize the exception context
+	uint64_t saved_inscount = ear->exc_ctx.ins_count;
 	memset(&ear->exc_ctx, 0, sizeof(ear->exc_ctx));
+	ear->exc_ctx.ins_count = saved_inscount;
 	
 	// Set the disable MMU flag
 	ear->exc_ctx.flags |= FLAG_MF;
@@ -124,6 +133,7 @@ static EAR_HaltReason EAR_invokeFaultHandler(EAR* ear, EAR_Size fault_handler, E
 	// Invoke page fault handler function
 	ret = EAR_invokeFunction(ear, fault_handler, 0, tte_paddr, vmaddr, protnum, saved_regs, next_pc, 0, true);
 	if(ret != HALT_NONE) {
+		ear->active = &ear->context;
 		return ret;
 	}
 	
@@ -475,6 +485,24 @@ void EAR_setMemoryHook(EAR* ear, EAR_MemoryHook* mem_fn, void* cookie) {
 	ear->mem_cookie = cookie;
 }
 
+/*!
+ * @brief Set the callback function used when execution resumes
+ * 
+ * @param debug_fn Function pointer called when execution is about to start
+ * @param cookie Opaque value passed to debug_fn
+ */
+void EAR_attachDebugger(EAR* ear, EAR_DebugAttach* debug_fn, void* cookie) {
+	ear->debug_fn = debug_fn;
+	ear->debug_cookie = cookie;
+	
+	if(ear->debug_fn != NULL) {
+		ear->debug_flags |= DEBUG_ATTACH;
+	}
+	else {
+		ear->debug_flags &= ~DEBUG_ATTACH;
+	}
+}
+
 static EAR_HaltReason EAR_readByte(EAR* ear, EAR_Size addr, EAR_Byte* out_byte) {
 	EAR_HaltReason ret;
 	if(ear->mem_fn != NULL) {
@@ -682,7 +710,7 @@ EAR_HaltReason EAR_fetchInstruction(EAR* ear, EAR_Size* pc, EAR_Size dpc, EAR_In
 		if(op == PREFIX_XC) {
 			// Extended Condition prefix, set high bit in condition code
 			if(out_insn->cond & 0x8) {
-				// Doesn't make sense to allow multiple XD prefixes
+				// Doesn't make sense to allow multiple XC prefixes
 				DEVEL_RETURN(ear, HALT_DECODE);
 			}
 			out_insn->cond |= 0x8;
@@ -693,6 +721,13 @@ EAR_HaltReason EAR_fetchInstruction(EAR* ear, EAR_Size* pc, EAR_Size dpc, EAR_In
 				DEVEL_RETURN(ear, HALT_DECODE);
 			}
 			out_insn->toggle_flags = true;
+		}
+		else if(op == PREFIX_EM) {
+			if(out_insn->enable_mmu) {
+				// Doesn't make sense to allow multiple EM prefixes
+				DEVEL_RETURN(ear, HALT_DECODE);
+			}
+			out_insn->enable_mmu = true;
 		}
 		else if(op & PREFIX_DR_MASK) {
 			// Destination Register prefix, set destination register
@@ -991,8 +1026,8 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 		write_flags = !write_flags;
 	}
 	
-	// Should the ZF, SF, and OF flags be updated with the value of rd_value?
-	bool update_zso = false;
+	// Should the ZF, SF, and PF flags be updated with the value of rd_value?
+	bool update_zsp = false;
 	
 	// Intermediate values in computations
 	uint32_t ubig = 0;
@@ -1025,7 +1060,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 				flags &= ~FLAG_SF;
 			}
 			
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_CMP: // Compare (same as SUB but Rd is ZERO)
@@ -1051,7 +1086,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rdx = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_MLS: // Multiply signed
@@ -1069,7 +1104,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rdx = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_DVU: // Divide/modulo unsigned
@@ -1087,7 +1122,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rdx = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_DVS: // Divide/modulo signed
@@ -1107,7 +1142,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rdx = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_XOR: // Bitwise xor
@@ -1115,7 +1150,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rd = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_AND: // Bitwise and
@@ -1123,7 +1158,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rd = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_ORR: // Bitwise or
@@ -1131,7 +1166,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			write_rd = true;
 			
 			// Does not update CF or VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_SHL: // Shift left
@@ -1160,7 +1195,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			}
 			
 			// Does not update VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_SRU: // Shift right unsigned
@@ -1188,7 +1223,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			}
 			
 			// Does not update VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_SRS: // Shift right signed
@@ -1225,19 +1260,19 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			}
 			
 			// Does not update VF
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_MOV: // Move/assign
 			rd_value = ryu;
 			write_rd = true;
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_LDW: // Read word from memory
 			ret = EAR_readWord(ear, ryu, &rd_value);
 			write_rd = true;
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_STW: // Write word to memory
@@ -1248,7 +1283,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			ret = EAR_readByte(ear, ryu, &btmp);
 			rd_value = btmp;
 			write_rd = true;
-			update_zso = true;
+			update_zsp = true;
 			break;
 		
 		case OP_STB: // Write byte to memory
@@ -1296,7 +1331,7 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 				// The byte value that was read will be stored in the destination register
 				rd_value = btmp;
 				write_rd = true;
-				update_zso = true;
+				update_zsp = true;
 			}
 			break;
 		
@@ -1413,14 +1448,22 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 	}
 	
 	if(write_flags) {
-		// Should ZF, OF, and ZF flags be updated from the value of rd_value?
-		if(update_zso) {
+		// Should ZF, SF, and PF flags be updated from the value of rd_value?
+		if(update_zsp) {
 			// Recompute ZF
 			if(rd_value == 0) {
 				flags |= FLAG_ZF;
 			}
 			else {
 				flags &= ~FLAG_ZF;
+			}
+			
+			// Recompute SF
+			if(rd_value & 0x8000) {
+				flags |= FLAG_SF;
+			}
+			else {
+				flags &= ~FLAG_SF;
 			}
 			
 			// Recompute PF
@@ -1434,14 +1477,6 @@ static EAR_HaltReason EAR_executeInstruction(EAR* ear, EAR_Instruction* insn) {
 			}
 			else {
 				flags &= ~FLAG_PF;
-			}
-			
-			// Recompute SF
-			if(rd_value & 0x8000) {
-				flags |= FLAG_SF;
-			}
-			else {
-				flags &= ~FLAG_SF;
 			}
 		}
 		
@@ -1459,6 +1494,16 @@ EAR_HaltReason EAR_stepInstruction(EAR* ear) {
 	EAR_Instruction insn;
 	EAR_HaltReason ret;
 	
+	// Only enable the interrupt handler if a debugger is attached and the
+	// interrupt handler wasn't already enabled by EAR_continue(). If this
+	// enables the interrupt handler, then make sure to disable it before
+	// leaving this function.
+	bool enabledInterruptHandler = false;
+	if((ear->debug_flags & DEBUG_ACTIVE) && !s_interrupt_handler_enabled) {
+		enable_interrupt_handler();
+		enabledInterruptHandler = true;
+	}
+	
 	// Read PC and DPC values
 	EAR_Size pc = ear->active->r[PC];
 	EAR_Size dpc = ear->active->r[DPC];
@@ -1471,7 +1516,7 @@ EAR_HaltReason EAR_stepInstruction(EAR* ear) {
 			ret = HALT_NONE;
 		}
 		
-		return ret;
+		goto out;
 	}
 	
 	// Print the instruction being executed if we are in debug mode
@@ -1485,10 +1530,24 @@ EAR_HaltReason EAR_stepInstruction(EAR* ear) {
 	
 	// Evaluate condition
 	if(EAR_evaluateCondition(ear, insn.cond)) {
+		// Enable MMU prefix present?
+		bool didEnableMmu = false;
+		if(insn.enable_mmu) {
+			if(ear->active->flags & FLAG_MF) {
+				ear->active->flags &= ~FLAG_MF;
+				didEnableMmu = true;
+			}
+		}
+		
 		// Execute instruction
 		ret = EAR_executeInstruction(ear, &insn);
 		if(ret == HALT_COMPLETE) {
 			ret = HALT_NONE;
+		}
+		
+		// Disable MMU again if enabled by the instruction prefix
+		if(didEnableMmu) {
+			ear->active->flags |= FLAG_MF;
 		}
 		
 		// Restore old PC if execution failed
@@ -1508,6 +1567,12 @@ EAR_HaltReason EAR_stepInstruction(EAR* ear) {
 	// Increment instruction counts
 	++ear->active->ins_count;
 	++ear->ins_count;
+	
+out:
+	if(enabledInterruptHandler) {
+		disable_interrupt_handler();
+	}
+	
 	return ret;
 }
 
@@ -1516,6 +1581,14 @@ EAR_HaltReason EAR_stepInstruction(EAR* ear) {
  */
 EAR_HaltReason EAR_continue(EAR* ear) {
 	EAR_HaltReason reason;
+	
+	// If a debugger wants to attach to the CPU when it resumes, invoke its callback
+	if(ear->debug_flags & DEBUG_ATTACH && ear->debug_fn != NULL) {
+		ear->debug_flags &= ~DEBUG_ATTACH;
+		reason = ear->debug_fn(ear->debug_cookie);
+		ear->debug_flags |= DEBUG_ATTACH;
+		return reason;
+	}
 	
 	if(ear->debug_flags & DEBUG_ACTIVE) {
 		enable_interrupt_handler();
@@ -1537,7 +1610,7 @@ EAR_HaltReason EAR_continue(EAR* ear) {
 }
 
 /*! Invokes a function at a given virtual address and passing up to 6 arguments.
- * @note This will overwrite the values of registers R1-R6, PC, DPC, RA, and RD.
+ * @note This will overwrite the values of registers A0-A5, PC, DPC, RA, and RD.
  *       All other registers are left untouched, so the existing values of SP and
  *       FP are used. This function will start at the given target address. When
  *       the target function returns to the initial values of RA and RD, this
@@ -1567,12 +1640,12 @@ EAR_HaltReason EAR_invokeFunction(
 	bool run
 ) {
 	// Set function call context
-	ear->active->r[R2] = arg1;
-	ear->active->r[R3] = arg2;
-	ear->active->r[R4] = arg3;
-	ear->active->r[R5] = arg4;
-	ear->active->r[R6] = arg5;
-	ear->active->r[R7] = arg6;
+	ear->active->r[A0] = arg1;
+	ear->active->r[A1] = arg2;
+	ear->active->r[A2] = arg3;
+	ear->active->r[A3] = arg4;
+	ear->active->r[A4] = arg5;
+	ear->active->r[A5] = arg6;
 	ear->active->r[RA] = EAR_CALL_RA;
 	ear->active->r[RD] = EAR_CALL_RD;
 	ear->active->r[PC] = func_vmaddr;
@@ -1830,17 +1903,19 @@ const char* EAR_haltReasonToString(EAR_HaltReason status) {
 		case HALT_DOUBLEFAULT:
 			return "Accessed unmapped memory in a page fault handler";
 		case HALT_DECODE:
-			return "Tried to execute an illegal instruction";
+			return "Encountered an illegal instruction";
 		case HALT_ARITHMETIC:
 			return "Divide/modulo by zero, or signed div/mod INT16_MIN by -1";
 		case HALT_SW_BREAKPOINT:
-			return "Executed a `BPT` instruction or hit a hardware breakpoint";
+			return "Executed a `BPT` instruction";
 		case HALT_HW_BREAKPOINT:
 			return "Hit a hardware breakpoint";
 		case HALT_RETURN:
 			return "Program tried to return from the topmost stack frame";
 		case HALT_COMPLETE:
 			return "For internal use only, used to support fault handlers and callbacks";
+		case HALT_DEBUGGER:
+			return "Halted by the debugger";
 		default:
 			return "Unknown halt reason";
 	}
@@ -1867,8 +1942,8 @@ const char* EAR_getConditionString(EAR_Cond cond) {
 
 const char* EAR_getRegisterName(EAR_Register reg) {
 	static const char* regnames[] = {
-		"ZERO", "TMP", "RV", "R3", "R4", "R5", "R6", "R7",
-		"R8", "R9", "FP", "SP", "RA", "RD", "PC", "DPC"
+		"ZERO", "A0", "A1", "A2", "A3", "A4", "A5", "S0",
+		"S1", "S2", "FP", "SP", "RA", "RD", "PC", "DPC"
 	};
 	return reg < ARRAY_COUNT(regnames) ? regnames[reg] : NULL;
 }
@@ -2057,23 +2132,23 @@ EAR_Size EAR_writeDisassembly(EAR* ear, EAR_Size addr, EAR_Size dpc, EAR_Size co
 static void writeThreadState(EAR_ThreadState* ctx, FILE* fp) {
 	fprintf(
 		fp,
-		"   (ZERO)R0: %04X        R8: %04X\n"
-		"    (TMP)R1: %04X        R9: %04X\n"
-		"(RV/ARG1)R2: %04X   (FP)R10: %04X\n"
-		"   (ARG2)R3: %04X   (SP)R11: %04X\n"
-		"   (ARG3)R4: %04X   (RA)R12: %04X\n"
-		"   (ARG4)R5: %04X   (RD)R13: %04X\n"
-		"   (ARG5)R6: %04X   (PC)R14: %04X\n"
-		"   (ARG6)R7: %04X  (DPC)R15: %04X\n"
+		"   (ZERO)R0: %04X      (S1)R8: %04X\n"
+		"     (A0)R1: %04X      (S2)R9: %04X\n"
+		"  (RV/A1)R2: %04X  (FP/S3)R10: %04X\n"
+		" (RVX/A2)R3: %04X     (SP)R11: %04X\n"
+		"     (A3)R4: %04X     (RA)R12: %04X\n"
+		"     (A4)R5: %04X     (RD)R13: %04X\n"
+		"     (A5)R6: %04X     (PC)R14: %04X\n"
+		"     (S0)R7: %04X    (DPC)R15: %04X\n"
 		"FLAGS: %c%c%c%c%c%c\n", //ZSPCVM
-		ctx->r[0], ctx->r[8],
-		ctx->r[1], ctx->r[9],
-		ctx->r[2], ctx->r[10],
-		ctx->r[3], ctx->r[11],
-		ctx->r[4], ctx->r[12],
-		ctx->r[5], ctx->r[13],
-		ctx->r[6], ctx->r[14],
-		ctx->r[7], ctx->r[15],
+		ctx->r[R0], ctx->r[R8],
+		ctx->r[R1], ctx->r[R9],
+		ctx->r[R2], ctx->r[R10],
+		ctx->r[R3], ctx->r[R11],
+		ctx->r[R4], ctx->r[R12],
+		ctx->r[R5], ctx->r[R13],
+		ctx->r[R6], ctx->r[R14],
+		ctx->r[R7], ctx->r[R15],
 		(ctx->flags & FLAG_ZF) ? 'Z' : 'z',
 		(ctx->flags & FLAG_SF) ? 'S' : 's',
 		(ctx->flags & FLAG_PF) ? 'P' : 'p',

@@ -48,7 +48,7 @@ def test_add_imm_negative():
 	assert asm("ADD R3, -10") == "e03ff6ff"
 
 def test_add_regalias():
-	assert asm("ADD TMP, RV, FP") == "d1e02a"
+	assert asm("ADD S0, RV, R10") == "d7e02a"
 
 def test_add_simm4():
 	assert asm("ADD R3, 1") == asm("INC R3")
@@ -182,7 +182,14 @@ def test_adc_xy():
 	assert asm("ADC R4, R5") == asm("INC.CS R4\nADD R4, R5")
 
 def test_adc_dxy():
-	assert asm("ADC R4, R5, 6") == asm("INC.CS R4, ZERO, 1\nADD R4, R5\nADD R4, 6")
+	assert asm("ADC R4, R5, 6") == asm(
+"""
+	MOV R4, ZERO
+	INC.CS R4
+	ADD R4, R5
+	ADD R4, 6
+"""
+	)
 
 def test_adc_cc_xy():
 	assert asm("ADC.EQ R4, R5") == asm(
@@ -214,7 +221,8 @@ def test_sbc_cc_dxy():
 """
 	BRR.NE @.after
 	
-	DEC.CS R4, ZERO, 1
+	MOV R4, ZERO
+	DEC.CS R4
 	ADD R4, R5
 	SUB R4, R6
 	

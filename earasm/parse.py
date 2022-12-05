@@ -18,7 +18,7 @@ def pick_insn(mnemonic, cc):
 		if mnemonic.endswith("F"):
 			return INSN_MAP[mnemonic[:-1]](cc, toggle_flags=True)
 		elif mnemonic.endswith("Y"):
-			return INSN_MAP[mnemnoic[:-1]](cc, write_flags=True)
+			return INSN_MAP[mnemonic[:-1]](cc, write_flags=True)
 		elif mnemonic.endswith("N"):
 			return INSN_MAP[mnemonic[:-1]](cc, write_flags=False)
 		else:
@@ -90,16 +90,28 @@ def p_dir_db_vallist(p):
 	p[0] = DotDB(p[2])
 
 def p_dir_db_string(p):
-	'''directive : DOTDB STRING'''
+	'''directive : DOTDB stringexpr'''
 	p[0] = DotDB([NumExpr(c) for c in p[2]])
 
 def p_dir_lestring(p):
-	'''directive : DOTLESTRING STRING'''
+	'''directive : DOTLESTRING stringexpr'''
 	p[0] = DotLEString(p[2])
+
+def p_stringexpr_single(p):
+	'''stringexpr : STRING'''
+	p[0] = p[1]
+
+def p_stringexpr_multiple(p):
+	'''stringexpr : stringexpr PLUS STRING'''
+	p[0] = p[1] + p[3]
 
 def p_dir_loc(p):
 	'''directive : DOTLOC constexpr'''
 	p[0] = DotLoc(p[2])
+
+def p_dir_align(p):
+	'''directive : DOTALIGN constexpr'''
+	p[0] = DotAlign(p[2])
 
 def p_dir_loc_with_dpc(p):
 	'''directive : DOTLOC constexpr COMMA constexpr'''
@@ -118,7 +130,7 @@ def p_dir_export(p):
 	p[0] = DotExport(p[2])
 
 def p_dir_export_explicit(p):
-	'''directive : DOTEXPORT labelref COMMA STRING'''
+	'''directive : DOTEXPORT labelref COMMA stringexpr'''
 	p[0] = DotExport(p[2], p[4])
 
 def p_pinsn_insn(p):
@@ -137,15 +149,15 @@ def p_empty(p):
 # Exclude DPC, as that's not legal in Ry
 def p_ry(p):
 	'''ry : ZERO
-	      | TMP
-	      | RV
-	      | R3
-	      | R4
-	      | R5
-	      | R6
-	      | R7
-	      | R8
-	      | R9
+	      | A0
+	      | A1
+	      | A2
+	      | A3
+	      | A4
+	      | A5
+	      | S0
+	      | S1
+	      | S2
 	      | FP
 	      | SP
 	      | RA
@@ -486,7 +498,7 @@ def p_insn_neg_inv(p):
 
 # ADR Rx, Label
 def p_insn_adr(p):
-	'''insn : pmn_adr reg COMMA labelref'''
+	'''insn : pmn_adr reg COMMA constexpr'''
 	p[0] = p[1].set_operands(Rx=p[2], Label=p[4])
 
 # SWP Ra, Rb

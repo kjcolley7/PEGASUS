@@ -6,7 +6,7 @@ Custom CPU architecture and binary file format, initially created for SunshineCT
 
 ## Useful Documentation
 
-* [EAR Extended Architecture Reference](docs/EAR_EAR.md)
+* [EAR Extended Architecture Reference](docs/EAR_EAR_v2.md)
 * [PEGASUS File Format Reference](docs/PEGASUS.md)
 
 
@@ -28,17 +28,17 @@ Custom CPU architecture and binary file format, initially created for SunshineCT
 
 ## Building & Deploying
 
-Must be built under Linux. Only tested on Ubuntu 18.04 and 20.04.
+Builds using PwnableHarness's `pwnmake` utility:
 
 ```bash
-git clone https://github.com/C0deH4cker/PwnableHarness.git && cd PwnableHarness
 git clone --recursive https://github.com/kjcolley7/PEGASUS.git && cd PEGASUS
+pwnmake <build-targets>
 ```
 
-* `make`: Compile all binaries
-* `make docker-build`: Build Docker images for all server-based challenges
-* `make docker-start`: Start Docker containers for all server-based challenges
-* `make publish`: Publish all build artifacts that should be distributed to players to the `publish` folder/symlink
-* `make check`: Run the test suite for assembler and emulator
-* `make solve`: Run solution scripts for all challenges, using `localhost` for server challenges
-* `make solve SERVER=<address>`: Run solution scripts for all challenges using the provided IP/hostname as the target server
+* `pwnmake`: Compile all binaries
+* `pwnmake docker-build`: Build Docker images for all server-based challenges
+* `pwnmake docker-start`: Start Docker containers for all server-based challenges
+* `pwnmake publish`: Publish all build artifacts that should be distributed to players to the `publish` folder
+* `pwnmake check`: Run the test suite for assembler and emulator
+* `pwnmake solve`: Run solution scripts for all challenges, using `localhost` for server challenges
+* `pwnmake solve SERVER=<address>`: Run solution scripts for all challenges using the provided IP/hostname as the target server

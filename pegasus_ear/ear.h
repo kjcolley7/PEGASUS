@@ -53,16 +53,30 @@ typedef uint8_t EAR_Register;
 #define R14 ((EAR_Register)14)
 #define R15 ((EAR_Register)15)
 
-// Register aliases
+// Primary register aliases
 #define ZERO   R0
-#define TMP    R1
 #define RV     R2
+#define RVX    R3
 #define FP    R10
 #define SP    R11
 #define RA    R12
 #define RD    R13
 #define PC    R14
 #define DPC   R15
+
+// Aliases for argument registers
+#define A0     R1
+#define A1     R2
+#define A2     R3
+#define A3     R4
+#define A4     R5
+#define A5     R6
+
+// Aliases for callee-saved registers
+#define S0     R7
+#define S1     R8
+#define S2     R9
+#define S3    R10
 
 
 // Condition flag values
@@ -156,6 +170,7 @@ typedef uint8_t EAR_Opcode;
 
 #define PREFIX_XC ((EAR_Opcode)0x00)
 #define PREFIX_TF ((EAR_Opcode)0x01)
+#define PREFIX_EM ((EAR_Opcode)0x02)
 #define PREFIX_RSV_MASK ((EAR_Opcode)0x0F)
 #define PREFIX_DR_MASK ((EAR_Opcode)0x10)
 
@@ -301,7 +316,7 @@ typedef enum EAR_HaltReason {
 	HALT_INSTRUCTION,         //!< Executed a `HLT` instruction
 	HALT_RETURN,              //!< Program tried to return from the topmost stack frame
 	HALT_COMPLETE,            //!< For internal use only, used to support fault handlers
-	HALT_DEBUGGER,            //!< Halted by Ctrl-C in the debugger
+	HALT_DEBUGGER,            //!< Halted by the debugger
 } EAR_HaltReason;
 
 #define EAR_FAILED(haltReason) ((haltReason) < 0)
@@ -309,20 +324,26 @@ typedef enum EAR_HaltReason {
 // Debugger state
 typedef uint8_t EAR_DebugFlags;
 
+//! A debugger is waiting to attach to the CPU when it resumes
+#define DEBUG_ATTACH ((EAR_DebugFlags)(1 << 0))
+
 //! The CPU is running under a debugger
-#define DEBUG_ACTIVE ((EAR_DebugFlags)(1 << 0))
+#define DEBUG_ACTIVE ((EAR_DebugFlags)(1 << 1))
 
 //! The CPU should skip the next instruction if it's a breakpoint
-#define DEBUG_RESUMING ((EAR_DebugFlags)(1 << 1))
+#define DEBUG_RESUMING ((EAR_DebugFlags)(1 << 2))
 
 //! Each instruction will be printed as it executes
-#define DEBUG_TRACE ((EAR_DebugFlags)(1 << 2))
+#define DEBUG_TRACE ((EAR_DebugFlags)(1 << 3))
 
 //! Be more verbose about things like segment mapping
-#define DEBUG_VERBOSE ((EAR_DebugFlags)(1 << 3))
+#define DEBUG_VERBOSE ((EAR_DebugFlags)(1 << 4))
 
 //! When a page fault occurs, don't execute a page fault handler in the VM
-#define DEBUG_NOFAULT ((EAR_DebugFlags)(1 << 4))
+#define DEBUG_NOFAULT ((EAR_DebugFlags)(1 << 5))
+
+//! Allow invasive commands that change processor state
+#define DEBUG_INVASIVE ((EAR_DebugFlags)(1 << 6))
 
 
 struct EAR_ThreadState {
@@ -345,7 +366,8 @@ struct EAR_Instruction {
 	
 	uint8_t port_number;      //!< Port number (for RDB and WRB)
 	
-	bool toggle_flags;        //!< Whether the TF instruction modifier was present
+	uint8_t toggle_flags : 1; //!< Whether the TF instruction modifier was present
+	uint8_t enable_mmu   : 1; //!< Whether the EM instruction modifier was present
 };
 
 struct EAR_TTE {
@@ -403,6 +425,7 @@ typedef bool EAR_PortRead(void* cookie, uint8_t port, EAR_Byte* out_byte);
 typedef bool EAR_PortWrite(void* cookie, uint8_t port, EAR_Byte byte);
 typedef EAR_HaltReason EAR_FaultHandler(void* cookie, EAR_Size vmaddr, EAR_Protection prot, EAR_TTE* tte, EAR_HaltReason faultReason, EAR_Size* out_paddr);
 typedef EAR_HaltReason EAR_MemoryHook(void* cookie, EAR_Size vmaddr, EAR_Protection prot, EAR_Size size, void* data);
+typedef EAR_HaltReason EAR_DebugAttach(void* cookie);
 
 struct EAR {
 	EAR_Memory mem;              //!< Physical memory accessible to the CPU
@@ -416,6 +439,8 @@ struct EAR {
 	void* fault_cookie;          //!< Opaque cookie value passed to fault_fn
 	EAR_MemoryHook* mem_fn;      //!< Function pointer called during all memory accesses
 	void* mem_cookie;            //!< Opaque cookie value passed to mem_fn
+	EAR_DebugAttach* debug_fn;   //!< Function pointer called when execution is about to start
+	void* debug_cookie;          //!< Opaque cookie value passed to debug_fn
 	uint64_t ins_count;          //!< Total number of instructions executed
 	EAR_DebugFlags debug_flags;  //!< Debugger state
 };
@@ -473,7 +498,6 @@ void EAR_setPorts(EAR* ear, EAR_PortRead* read_fn, EAR_PortWrite* write_fn, void
  */
 void EAR_setFaultHandler(EAR* ear, EAR_FaultHandler* fault_fn, void* cookie);
 
-
 /*!
  * @brief Set the callback function used whenever an instruction accesses memory
  * 
@@ -481,6 +505,14 @@ void EAR_setFaultHandler(EAR* ear, EAR_FaultHandler* fault_fn, void* cookie);
  * @param cookie Opaque value passed to mem_fn
  */
 void EAR_setMemoryHook(EAR* ear, EAR_MemoryHook* mem_fn, void* cookie);
+
+/*!
+ * @brief Set the callback function used when execution resumes
+ * 
+ * @param debug_fn Function pointer called when execution is about to start
+ * @param cookie Opaque value passed to debug_fn
+ */
+void EAR_attachDebugger(EAR* ear, EAR_DebugAttach* debug_fn, void* cookie);
 
 /*!
  * @brief Fetch the next code instruction starting at *pc.
@@ -512,7 +544,7 @@ EAR_HaltReason EAR_continue(EAR* ear);
 /*!
  * @brief Invokes a function at a given virtual address and passing up to 6 arguments.
  * 
- * @note This will overwrite the values of registers R1-R6, PC, DPC, RA, and RD.
+ * @note This will overwrite the values of registers A0-A5, PC, DPC, RA, and RD.
  *       All other registers are left untouched, so the existing values of SP and
  *       FP are used. This function will start at the given target address. When
  *       the target function returns to the initial values of RA and RD, this

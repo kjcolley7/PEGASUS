@@ -179,6 +179,12 @@ class Context(object):
 					new_dpc = item.dpc.value(self)
 				self.set_loc(new_pc, new_dpc)
 				outlist.append(item)
+			elif isinstance(item, DotAlign):
+				# Handle .align directives
+				align = item.align.value(self)
+				new_pc = (self.here + align - 1) // align * align
+				self.set_loc(new_pc)
+				outlist.append(item)
 			elif isinstance(item, DotSegment):
 				raise RuntimeError(".segment directives should have already been handled!")
 			elif isinstance(item, Label):
@@ -221,6 +227,11 @@ class Context(object):
 				if item.dpc is not None:
 					new_dpc = item.dpc.value(self)
 				self.set_loc(new_pc, new_dpc)
+			elif isinstance(item, DotAlign):
+				# Handle .align directives
+				align = item.align.value(self)
+				new_pc = (self.here + align - 1) // align * align
+				self.set_loc(new_pc)
 			else:
 				# Instruction or data directive like .db/.dw/.lestring
 				curlen = len(item)

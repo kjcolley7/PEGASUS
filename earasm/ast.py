@@ -79,6 +79,13 @@ class DotLoc(Directive):
 			argstr += ", 0x%X" % self.dpc
 		return "DotLoc(%s)" % argstr
 
+class DotAlign(Directive):
+	def __init__(self, alignment):
+		self.align = alignment
+	
+	def __repr__(self):
+		return "DotAlign(%r)" % self.align
+
 class DotSegment(Directive):
 	def __init__(self, name):
 		self.name = name

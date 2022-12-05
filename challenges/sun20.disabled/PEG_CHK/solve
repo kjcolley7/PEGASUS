@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# https://stackoverflow.com/a/246128
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Running the challenge binary just prints out the flag directly
+"${DIR}/../../bin/runpeg" "${DIR}/PEGASUS_User_Guide.peg"

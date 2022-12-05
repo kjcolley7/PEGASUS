@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <errno.h>
 
 #ifndef UNIQUIFY
 #define UNIQUIFY(macro, args...) UNIQUIFY_(macro, __COUNTER__, ##args)
@@ -55,7 +56,7 @@
 
 #define fail() fail_(__LINE__)
 static inline void fail_(int line) {
-	printf("Uh oh, something went wrong. Contact the admin for help and provide this failure code: %d\n", line);
+	printf("Uh oh, something went wrong. Contact the admin for help and provide this failure code: %d.%d\n", line, errno);
 	exit(EXIT_FAILURE);
 }
 

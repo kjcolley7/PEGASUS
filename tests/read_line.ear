@@ -1,20 +1,20 @@
 /*
 int read_line(char* buffer, size_t size) {
-	int value;
+	int value, prev_value = 0;
 	int bytes_read = 0;
 	
 	while(bytes_read < size && (value = port_read(stdio)) >= 0) {
-		++bytes_read;
-		
-		if(value != '\n') {
-			value |= 0x80;
-		}
-		
-		*buffer++ = value;
-		
 		if(value == '\n') {
+			*buffer = prev_value;
 			break;
 		}
+		
+		if(bytes_read != 0) {
+			*buffer++ = prev_value | 0x80;
+		}
+		
+		prev_value = value;
+		++bytes_read;
 	}
 	
 	if(value < 0) {
@@ -26,51 +26,63 @@ int read_line(char* buffer, size_t size) {
 */
 
 
-// R2 = buffer
-// R3 = size
-// R4 = bytes_read
-// R5 = value
-// R6 = 0x0A
-// R7 = 0x80
+// A0 = buffer
+// A1 = size
+// R3 = bytes_read
+// R4 = value
+// R5 = prev_value
 .scope
 .export @read_line
 @read_line:
 	// bytes_read = 0;
-	MOV   R4, ZERO
-	MOV   R6, 0x0A
-	MOV   R7, 0x80
-	BRR   @.while_cond
+	MOV     R3, ZERO
+	MOV     R5, ZERO
+	BRR     @.while_cond
 	
 @.while_body:
+	/*
+	if(value == '\n') {
+		*buffer = prev_value;
+		break;
+	}
+	*/
+	CMP     R4, '\n'
+	STB.EQ  [A0], R5
+	BRR.EQ  @.while_after
+	
+	/*
+	if(bytes_read != 0) {
+		*buffer++ = prev_value | 0x80;
+	}
+	*/
+	MOV     R3, R3
+	BRR.ZR  @.skip_first_write
+	
+	ORR     R5, 0x80
+	STB     [A0], R5
+	INC     A0
+	
+@.skip_first_write:
+	// prev_value = value;
+	MOV     R5, R4
+	
 	// ++bytes_read;
-	INC    R4
-	// if(value != '\n')
-	CMP    R5, R6
-	//     value |= 0x80;
-	ORR.NE R5, R7
-	// *buffer = value;
-	STB    [R2], R5
-	// ++buffer;
-	INC    R2
-	// if(value == '\n')
-	CMP    R5, R6
-	//     break;
-	BRR.EQ @.while_after
+	INC     R3
 	
 @.while_cond:
 	// while(bytes_read < size ...
-	CMP    R4, R3
-	BRR.GE @.while_after
+	CMP     R3, A1
+	BRR.GE  @.while_after
 	//       ... && (value = port_read(portnum)) >= 0)
-	RDB    R5
-	BRR.CC @.while_body
+	RDB     R4
+	BRR.CC  @.while_body
 	// if(value < 0) return value;
-	MOV    RV, R5
-	BRR    @.return
+	MOV     RV, R4
+	BRR     @.return
 	
 @.while_after:
 	// return bytes_read;
-	MOV    RV, R4
+	MOV     RV, R3
 	
 @.return:
 	RET

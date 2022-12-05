@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+from pwn import *
+
+#HOST = "localhost"
+HOST = "sunshinectf.games"
+
+
+def lestring_size(slice):
+	size = 0
+	while slice[size] & 0x80:
+		size += 1
+	
+	# Count the final byte without the high bit
+	size += 1
+	return size
+
+
+class CodeView:
+	def __init__(self, peg):
+		if peg[:12] != b"\x7fPEGASUS_EAR":
+			raise ValueError("Incorrect magic in PEGASUS file")
+		
+		pos = 12
+		cmd_count = u16(peg[pos:pos+2])
+		pos += 2
+		
+		code_vmaddr = None
+		code_foff = None
+		code_fsize = None
+		pc = None
+		
+		for i in range(cmd_count):
+			cmd_start = pos
+			cmd_type = u16(peg[pos:pos+2])
+			pos += 2
+			cmd_size = u16(peg[pos:pos+2])
+			pos += 2
+			
+			# Pegasus_Segment
+			if cmd_type == 1:
+				# struct Pegasus_Segment: Pegasus_Cmd {
+				# 	lestring name;                  // Name of the segment such as @TEXT
+				# 	uint8_t mem_vppn;               // Virtual page number where the segment should be mapped
+				# 	uint8_t mem_vpage_count;        // Number of virtual pages to map in this segment region
+				# 	uint16_t mem_foff;              // File offset in bytes to the start of the segment data
+				# 	uint16_t mem_fsize;             // Number of bytes starting at mem_foff to map
+				# 	uint8_t mem_prot;               // Bitmask of memory protections to apply (EAR_PROT_READ = 1, EAR_PROT_WRITE = 2, EAR_PROT_EXECUTE = 4)
+				# };
+				
+				# skip name
+				name_len = lestring_size(peg[pos:])
+				pos += name_len
+				
+				# read mem_vppn
+				mem_vppn = peg[pos]
+				pos += 1
+				
+				# skip mem_vpage_count
+				pos += 1
+				
+				# read mem_foff
+				mem_foff = u16(peg[pos:pos+2])
+				pos += 2
+				
+				# read mem_fsize
+				mem_fsize = u16(peg[pos:pos+2])
+				pos += 2
+				
+				# read mem_prot
+				mem_prot = peg[pos]
+				
+				# PROT_EXECUTE?
+				if mem_prot & 4:
+					code_vmaddr = mem_vppn * 0x100
+					code_foff = mem_foff
+					code_fsize = mem_fsize
+			
+			# Pegasus_Entrypoint
+			elif cmd_type == 2:
+				# struct Pegasus_Entrypoint: Pegasus_Cmd {
+				# 	uint16_t A0, A1, A2, A3, A4, A5, PC, DPC;
+				# };
+				pc = u16(peg[pos+12:pos+14])
+			
+			pos = cmd_start + cmd_size
+		
+		if not all((code_vmaddr, code_foff, code_fsize)):
+			raise RuntimeError("Didn't find code segment")
+		
+		if not pc:
+			raise RuntimeError("Didn't find entrypoint command")
+		
+		self.code_vmaddr = code_vmaddr
+		self.code = peg[code_foff:code_fsize]
+		self.pc = pc
+		self.dpc = 0
+	
+	def skip(self, n=1):
+		self.pc += (1 + self.dpc) * n
+	
+	def fetch(self):
+		addr = self.pc
+		
+		if addr < 0 or addr >= len(self.code):
+			raise IndexError("PC %d is out of the known code region" % (addr,))
+		
+		off = addr - self.code_vmaddr
+		ret = self.code[off]
+		
+		self.skip()
+		return ret
+	
+	def fetch16(self):
+		lo = self.fetch()
+		hi = self.fetch()
+		return (hi << 8) | lo
+
+
+# Recursive depth-first search
+def solve_grid(grid, x=0, y=0):
+	try:
+		cell = grid[y][x]
+	except IndexError:
+		return None
+	
+	# Reached the bottom-right corner
+	if cell.value == 0:
+		return ""
+	
+	# Try right
+	path = solve_grid(grid, x + cell.value, y)
+	if path is not None:
+		return cell.right + path
+	
+	# Try down
+	path = solve_grid(grid, x, y + cell.value)
+	if path is not None:
+		return cell.down + path
+	
+	return None
+
+
+class GridCell:
+	def __init__(self, value=0, right=None, down=None):
+		self.value = value
+		self.right = right
+		self.down = down
+	
+	def __repr__(self):
+		return repr(self.value)
+
+
+def do_level(r):
+	# Print the reference id for reproducible debugging purposes
+	r.recvuntil(b"reference id: ")
+	refid = r.recvuntilS(")", drop=True)
+	info("Ref id: %s" % refid)
+	r.recvline()
+	
+	# Receive and decode the PEGASUS file
+	hexpeg = r.recvline().strip()
+	pegdata = unhex(hexpeg)
+	
+	# Minimally parse the PEGASUS file to find the code region
+	code = CodeView(pegdata)
+	
+	# MOV.AL
+	assert code.fetch() == 0xec
+	
+	# DPC, imm16
+	assert code.fetch() == 0xff
+	
+	# imm16
+	code.dpc = code.fetch16()
+	
+	# DPC is set to width * height - 1
+	num_nodes = code.dpc + 1
+	node_start = code.pc
+	
+	def node_addr_to_index(addr):
+		idx = addr - node_start
+		assert idx >= 0 and idx < num_nodex
+		return idx
+	
+	node_list = []
+	max_x = 0
+	max_y = 0
+	
+	# Ignore the final node
+	for i in range(num_nodes - 1):
+		code.pc = node_start + i
+		
+		# Each block starts with these instructions:
+		# 
+		# MOV     R2, {VALUE}
+		# MOV     R3, {X_POS}
+		# MOV     R4, {Y_POS}
+		# @.read_char:
+		# RDB     R1
+		# HLT.CS
+		# CMP     R1, '{RIGHT_CHAR}'
+		# BRR.EQ  @.right
+		# CMP     R1, '{DOWN_CHAR}'
+		# BRR.EQ  @.down
+		# CMP     R1, '\n'
+		# BRR.EQ  @.read_char
+		# HLT
+		
+		def chkcode(code_expect, mnem):
+			if isinstance(code_expect, int):
+				code_expect = [code_expect]
+			
+			for c in code_expect:
+				byte = code.fetch()
+				if byte != c:
+					error(
+						"Node %u missing %s at 0x%04X. Expected %02x, got %02x" % (
+							i, mnem, code.pc, c, byte
+						)
+					)
+		
+		chkcode([0xec, 0x2f], "MOV R2, imm16")
+		value = code.fetch16()
+		chkcode([0xec, 0x3f], "MOV R3, imm16")
+		x_pos = code.fetch16()
+		chkcode([0xec, 0x4f], "MOV R4, imm16")
+		y_pos = code.fetch16()
+		
+		chkcode([0xf8, 0x10], "RDB R1, (0)")
+		chkcode(0xbe, "HLT.CS")
+		chkcode([0xed, 0x1f], "CMP R1, imm16")
+		right = code.fetch16()
+		assert right >= ord("0") and right <= ord("z")
+		right = chr(right)
+		
+		chkcode(0x15, "BRR.EQ target")
+		code.fetch16() #skip branch target
+		
+		chkcode([0xed, 0x1f], "CMP R1, imm16")
+		down = code.fetch16()
+		assert down >= ord("0") and down <= ord("z")
+		down = chr(down)
+		
+		if x_pos > max_x:
+			max_x = x_pos
+		
+		if y_pos > max_y:
+			max_y = y_pos
+		
+		cell = GridCell(value, right, down)
+		node_list.append((x_pos, y_pos, cell))
+	
+	width = max_x + 1
+	height = max_y + 1
+	
+	grid = []
+	for i in range(height):
+		grid.append([None] * width)
+	
+	for node in node_list:
+		grid[node[1]][node[0]] = node[2]
+	
+	grid[-1][-1] = GridCell()
+	
+	pprint(grid)
+	
+	path = solve_grid(grid)
+	r.sendline(path)
+	
+	r.recvuntil(b"flag: '")
+	
+	return r.recvuntilS("'", drop=True)
+
+
+def main():
+	# EAR context
+	context.endian = "little"
+	context.bits = 16
+	# context.log_level = "debug"
+	
+	r = remote(HOST, 22705)
+	
+	# Handle password (if enabled)
+	initial = r.recvn(10, timeout=0.5)
+	if initial == b"Password: ":
+		r.sendline(b"robotic pegasus overlords")
+		r.recvline()
+	else:
+		r.unrecv(initial)
+	
+	flag = ""
+	for i in range(5):
+		flag += do_level(r)
+		print("Flag: %s" % flag)
+
+
+if __name__ == "__main__":
+	main()

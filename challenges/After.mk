@@ -1,18 +1,8 @@
 PEG_CHALS_DIR := $(DIR)
 
 ifndef SERVER
-SERVER := localhost
+SERVER :=
 endif
-
-# Directories that are bind-mounted to a Docker container should have UID:GID
-# set to 1000:1000, which are the default UID:GID of a docker user.
-%/.docker_dir:
-	$(_v)mkdir -p $(@D) && sudo chown 1000:1000 $(@D)
-
-# Fix the dynamic linking problem
-%.so: %-nold.so $(PEG_BIN)/mkexeloadable
-	$(_V)echo 'Patching $@ to be loadable with dlopen()'
-	$(_v)cp $< $@.tmp && $(PEG_BIN)/mkexeloadable $@.tmp && mv $@.tmp $@
 
 .PHONY: solve
 
