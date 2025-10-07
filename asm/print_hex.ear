@@ -1,0 +1,51 @@
+.scope
+.export @print_hex_byte
+@print_hex_byte:
+	ADR     A5, @.hex_chars
+	
+	// Print high nybble
+	SRU     A3, A0, 4
+	LDB     A4, [A5 + A3]
+	WRB     A4
+	
+	// Print low nybble
+	AND     A0, 0xF
+	LDB     A4, [A5 + A0]
+	WRB     A4
+	
+	RET
+
+.export @print_hex
+/*
+Parameters:
+A0: const unsigned char* data
+A1: uword len
+*/
+@print_hex:
+	MOV     A1, A1
+	RET.ZR
+	
+	ADR     A5, @.hex_chars
+	
+@.print_loop:
+	LDB     A2, [A0]
+	
+	// Print high nybble
+	SRU     A3, A2, 4
+	LDB     A4, [A5 + A3]
+	WRB     A4
+	
+	// Print low nybble
+	AND     A2, 0xF
+	LDB     A4, [A5 + A2]
+	WRB     A4
+	
+	// Advance to next byte
+	INC     A0
+	DEC     A1
+	BRR.NZ  @.print_loop
+	
+	RET
+
+@.hex_chars:
+	.db "0123456789abcdef"

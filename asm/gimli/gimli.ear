@@ -1,0 +1,906 @@
+$GIMLI_BYTES := 48
+$GIMLI_STATE_SIZEOF := $GIMLI_BYTES + 2
+$GIMLI_WORDS := ($GIMLI_BYTES / 2)
+$GIMLI_RATE := 16
+$GIMLI_HASH_DEFAULT_LEN := 32
+
+.import "../puts.ear"
+.import "../print_hex.ear"
+
+.scope
+.export @gimli_dump_state
+/*
+Parameters:
+A0: const void* state
+
+Locals:
+S0: const unsigned char* p
+S1: uword i
+*/
+$.FPOFF := 4 //S0-S1
+@gimli_dump_state:
+	PSH     {S0-S1, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	MOV     S0, A0
+	
+	WRB     ' '
+	WRB     ' '
+	MOV     S1, ZERO
+	
+@.loop:
+	MOV     S1, S1
+	BRR.ZR  @.print_byte
+	
+	AND     ZERO, S1, 0xF
+	BRR.NZ  @.not_end_of_row
+	
+	WRB     '\n'
+	WRB     ' '
+	WRB     ' '
+	BRR     @.print_byte
+	
+@.not_end_of_row:
+	AND     ZERO, S1, 0x3
+	WRB.ZR  ' '
+	
+@.print_byte:
+	// fprintf(stderr, "%02x", p[i]);
+	LDB     A0, [S0 + S1]
+	FCR     @print_hex_byte
+	
+	INC     S1
+	CMP     S1, $GIMLI_BYTES
+	BRR.LT  @.loop
+	
+	WRB     '\n'
+	
+	.assert $.FPOFF == 4 //S0-S1
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S1, FP, PC, DPC}
+
+
+.scope
+.export @gimli
+/*
+Parameters:
+A0: uword* state (12 elements)
+
+Locals:
+A1: uword round (0-24)
+A2: uword column (0-16)
+A3.A4: u32 x
+A5.S0: u32 y
+S1.S2: u32 z
+RA.RD: u32 a (tmp1)
+A1.FP: u32 b (tmp2)
+*/
+@.gimli_msg:
+	.lestring "!!!!!Gimli!!!!!\n"
+
+@gimli:
+	PSH     {S0-S2, FP, RA, RD}
+	
+	/*DEBUG
+	PSH     {A0}
+	
+	ADR     A0, @.gimli_msg
+	FCR     @puts
+	
+	LDW     A0, [SP]
+	FCR     @gimli_dump_state
+	
+	LDW     A0, [SP]
+	//*/
+	
+	//for (a1.round = 24; a1.round > 0; --a1.round) {
+	MOV     A1, 24
+@.round_loop:
+	
+	// Allow A1 to be reused as a1.bl (LO16(tmp2))
+	PSH     {A1}
+	
+	//for (a2.column = 0; a2.column < 4; a2.column++) {
+	MOV     A2, ZERO
+@.column_loop:
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state + a2.column * sizeof(uint32_t));
+	SHL     A1, A2, 2
+	SUB     A1, A0, A1
+	LDW     FP, [SP + 2]
+	CMP     A1, FP
+	BPT.NE
+	//*/
+	
+	/*
+	const uint32_t* px = state + column * sizeof(uint32_t);
+	const uint32_t x = rol(*px, 24);
+	*/
+	
+	// a3.xl = POP(a0.state);
+	// a4.xh = POP(a0.state);
+	POP     A0, {A3-A4}
+	
+	/* x = rol(x, 24); */
+	// ra.al = a3.xl << 8;
+	SHL     RA, A3, 8
+	// rd.ah = a4.xh << 8;
+	SHL     RD, A4, 8
+	// a3.xl >>= (16 - 8);
+	SRU     A3, 16 - 8
+	// a3.xl |= rd.ah;
+	ORR     A3, RD
+	// a4.xh >>= (16 - 8);
+	SRU     A4, 16 - 8
+	// a4.xh |= ra.al;
+	ORR     A4, RA
+	
+	// a0.state += 3 * sizeof(uint32_t);
+	ADD     A0, 3 * 4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state + (a2.column + 4) * 4);
+	INC     A1, A2, 4
+	SHL     A1, 2
+	SUB     A1, A0, A1
+	LDW     FP, [SP + 2]
+	CMP     A1, FP
+	BPT.NE
+	//*/
+	
+	/*
+	const uint32_t* py = state + (column + 4) * sizeof(uint32_t);
+	const uint32_t y = rol(*py, 9);
+	*/
+	
+	// a5.yl = POP(a0.state);
+	// s0.yh = POP(a0.state);
+	POP     A0, {A5, S0}
+	// ra.al = a5.yl >> (16 - 9);
+	SRU     RA, A5, 16 - 9
+	// rd.ah = s0.yh >> (16 - 9);
+	SRU     RD, S0, 16 - 9
+	// a5.yl <<= 9;
+	SHL     A5, 9
+	// a5.yl |= rd.ah;
+	ORR     A5, RD
+	// s0.yh <<= 9;
+	SHL     S0, 9
+	// s0.yh |= ra.al;
+	ORR     S0, RA
+	
+	// a0.state += 3 * sizeof(uint32_t);
+	ADD     A0, 3 * 4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state + (a2.column + 8) * sizeof(uint32_t));
+	INC     A1, A2, 8
+	SHL     A1, 2
+	SUB     A1, A0, A1
+	LDW     FP, [SP + 2]
+	CMP     A1, FP
+	BPT.NE
+	//*/
+	
+	/*
+	const uint32_t* pz = state + (column + 8) * sizeof(uint32_t);
+	const uint32_t z = *pz;
+	*/
+	
+	// s1.zl = POP(a0.state);
+	// s2.zh = POP(a0.state);
+	POP     A0, {S1-S2}
+	
+	/* state[column + 8] = x ^ (z << 1) ^ ((y & z) << 2); */
+	// (y & z)
+	// ra.al = a5.yl & s1.zl;
+	AND     RA, A5, S1
+	// rd.ah = s0.yh & s2.zh;
+	AND     RD, S0, S2
+	
+	// (y & z) << 2
+	// a1.bl = ra.al >> (16 - 2);
+	SRU     A1, RA, 16 - 2
+	// ra.al <<= 2;
+	SHL     RA, 2
+	// rd.ah <<= 2;
+	SHL     RD, 2
+	// rd.ah |= a1.bl;
+	ORR     RD, A1
+	
+	// (z << 1)
+	// s3.bh = s2.zh << 1;
+	SHL     FP, S2, 1
+	// carry = !!(s1.zl & 0x8000);
+	// a1.bl = s1.zl << 1;
+	SHL     A1, S1, 1
+	// if(carry) {
+	// 	s3.bh |= 1;
+	// }
+	ORR.CS  FP, 1
+	
+	// (z << 1) ^ ((y & z) << 2)
+	// ra.al ^= a1.bl;
+	XOR     RA, A1
+	// rd.ah ^= s3.bh;
+	XOR     RD, FP
+	
+	// x ^ (z << 1) ^ ((y & z) << 2)
+	// ra.al ^= a3.xl;
+	XOR     RA, A3
+	// rd.ah ^= a4.xh;
+	XOR     RD, A4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state + (a2.column + 9) * sizeof(uint32_t));
+	ADD     A1, A2, 9
+	SHL     A1, 2
+	SUB     A1, A0, A1
+	LDW     FP, [SP + 2]
+	CMP     A1, FP
+	BPT.NE
+	//*/
+	
+	/*
+	p = state + (column + 8) * sizeof(uint32_t);
+	*p = x ^ (z << 1) ^ ((y & z) << 2);
+	*/
+	// PSH(a0.state, rd.ah);
+	// PSH(a0.state, ra.al);
+	PSH     A0, {RA-RD}
+	
+	/* state[column + 4] = y ^ x ^ ((x | z) << 1); */
+	
+	// (x | z)
+	// ra.al = a3.xl | s1.zl;
+	ORR     RA, A3, S1
+	// rd.ah = a4.xh | s2.zh;
+	ORR     RD, A4, S2
+	
+	// (x | z) << 1
+	// rd.ah <<= 1;
+	SHL     RD, 1
+	// carry = !!(ra.al & 0x8000);
+	// ra.al <<= 1;
+	SHL     RA, 1
+	// if(carry) {
+	// 	rd.ah |= 1;
+	// }
+	ORR.CS  RD, 1
+	
+	// x ^ ((x | z) << 1)
+	// ra.al ^= a3.xl;
+	XOR     RA, A3
+	// rd.ah ^= a4.xh;
+	XOR     RD, A4
+	
+	// y ^ x ^ ((x | z) << 1)
+	// ra.al ^= a5.yl;
+	XOR     RA, A5
+	// rd.ah ^= s0.yh;
+	XOR     RD, S0
+	
+	// a0.state -= 3 * sizeof(uint32_t);
+	SUB     A0, 3 * 4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state + (a2.column + 5) * sizeof(uint32_t));
+	INC     A1, A2, 5
+	SHL     A1, 2
+	SUB     A1, A0, A1
+	LDW     FP, [SP + 2]
+	CMP     A1, FP
+	BPT.NE
+	//*/
+	
+	/*
+	p = state + (column + 4) * sizeof(uint32_t);
+	*p = y ^ x ^ ((x | z) << 1);
+	*/
+	// PSH(a0.state, rd.ah);
+	// PSH(a0.state, ra.al);
+	PSH     A0, {RA-RD}
+	
+	/* state[column] = z ^ y ^ ((x & y) << 3); */
+	
+	// (x & y)
+	// ra.al = a3.xl & a5.yl;
+	AND     RA, A3, A5
+	// rd.ah = a4.xh & s0.yh;
+	AND     RD, A4, S0
+	
+	// (x & y) << 3
+	// a1.bl = ra.al >> (16 - 3);
+	SRU     A1, RA, 16 - 3
+	// ra.al <<= 3;
+	SHL     RA, 3
+	// rd.ah <<= 3;
+	SHL     RD, 3
+	// rd.ah |= a1.bl;
+	ORR     RD, A1
+	
+	// y ^ ((x & y) << 3)
+	// ra.al ^= a5.yl;
+	XOR     RA, A5
+	// rd.ah ^= s0.yh;
+	XOR     RD, S0
+	
+	// z ^ y ^ ((x & y) << 3)
+	// ra.al ^= s1.zl;
+	XOR     RA, S1
+	// rd.ah ^= s2.zh;
+	XOR     RD, S2
+	
+	// a0.state -= 3 * sizeof(uint32_t);
+	SUB     A0, 3 * 4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state + (a2.column + 1) * sizeof(uint32_t));
+	INC     A1, A2, 1
+	SHL     A1, 2
+	SUB     A1, A0, A1
+	LDW     FP, [SP + 2]
+	CMP     A1, FP
+	BPT.NE
+	//*/
+	
+	/*
+	p = state + column * sizeof(uint32_t);
+	*p = z ^ y ^ ((x & y) << 3);
+	*/
+	// PSH(a0.state, rd.ah);
+	// PSH(a0.state, ra.al);
+	PSH     A0, {RA-RD}
+	// a0.state += sizeof(uint32_t);
+	INC     A0, 4
+	
+	/*DEBUG
+	// if(a1.round == 24) {
+	// 	fprintf(stderr, "After first round, column %hu:\n", a2.column);
+	// 	gimli_dump_state(state);
+	// }
+	LDW     A1, [SP]
+	CMP     A1, 24
+	BRR.NE  @.skip_debug_dump
+	BRR     @.debug_dump
+	
+@.debug_msg:
+	.lestring "After first round, column "
+	
+@.debug_dump:
+	PSH     {A0-A2}
+	ADR     A0, @.debug_msg
+	FCR     @puts
+	
+	LDW     A1, [SP + 4]
+	DVU     A4:A3, A1, 10
+	ADDN.NZ A3, '0'
+	WRB.NZ  A3
+	ADD     A4, '0'
+	WRB     A4
+	WRB     ':'
+	WRB     '\n'
+	
+	// Load debug-saved original state
+	LDW     A0, [SP + 8]
+	FCR     @gimli_dump_state
+	
+	POP     {A0-A2}
+	
+@.skip_debug_dump:
+	//*/
+	
+	//} end for (column = 0; column < 4; column++)
+	INC     A2
+	CMP     A2, 4
+	BRR.LT  @.column_loop
+	
+	// a0.state -= 4 * sizeof(uint32_t);
+	SUB     A0, 4 * 4
+	
+	// a1.round = pop();
+	POP     {A1}
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state);
+	LDW     FP, [SP]
+	CMP     A0, FP
+	BPT.NE
+	//*/
+	
+	/*
+	switch (a1.round & 3) {
+	case 0: ...
+	case 2: ...
+	}
+	*/
+	SRU     A2, A1, 1
+	BRR.CS  @.next_round
+	SRU     A2, 1
+	BRR.CS  @.case_2
+	
+@.case_0:
+	/* small swap: pattern s...s...s... etc. */
+	/* add constant: pattern c...c...c... etc. */
+	// x = state[0];
+	// a3.xl = POP(a0.state);
+	// a4.xh = POP(a0.state);
+	// y = state[1];
+	// a5.yl = POP(a0.state);
+	// s0.yh = POP(a0.state);
+	POP     A0, {A3-A5, S0}
+	// state[1] = x;
+	// PSH(a0.state, a4.xh);
+	// PSH(a0.state, a3.xl);
+	PSH     A0, {A3-A4}
+	
+	// static uint32_t coeff(int round)
+	// {
+	//     return UINT32_C(0x9E377900) | (uint32_t)round;
+	// }
+	// state[0] = y ^ coeff(round);
+	// s0.yh ^= 0x9E37;
+	XOR     S0, 0x9E37
+	// a3.xl = a1.round | 0x7900;
+	ORR     A3, A1, 0x7900
+	// a5.yl ^= a3.xl;
+	XOR     A5, A3
+	// PSH(a0.state, s0.yh);
+	// PSH(a0.state, a5.yl);
+	PSH     A0, {A5, S0}
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state);
+	LDW     FP, [SP]
+	CMP     A0, FP
+	BPT.NE
+	//*/
+	
+	// a0.state += 2 * sizeof(uint32_t);
+	INC     A0, 2 * 4
+	
+	// x = state[2];
+	// a3.xl = POP(a0.state);
+	// a4.xh = POP(a0.state);
+	// y = state[3];
+	// a5.yl = POP(a0.state);
+	// s0.yh = POP(a0.state);
+	POP     A0, {A3-A5, S0}
+	// state[3] = x;
+	// PSH(a0.state, a4.xh);
+	// PSH(a0.state, a3.xl);
+	PSH     A0, {A3-A4}
+	// state[2] = y;
+	// PSH(a0.state, s0.yh);
+	// PSH(a0.state, a5.yl);
+	PSH     A0, {A5, S0}
+	
+	// a0.state -= 2 * sizeof(uint32_t);
+	DEC     A0, 2 * 4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state);
+	LDW     FP, [SP]
+	CMP     A0, FP
+	BPT.NE
+	//*/
+	
+	// break;
+	BRR     @.next_round
+	
+@.case_2:
+	/* big swap: pattern ..S...S...S. etc. */
+	// x = state[0];
+	// a3.xl = POP(a0.state);
+	// a4.xh = POP(a0.state);
+	POP     A0, {A3-A4}
+	// y = state[2];
+	// a0.state += sizeof(uint32_t);
+	INC     A0, 4
+	// a5.yl = POP(a0.state);
+	// s0.yh = POP(a0.state);
+	POP     A0, {A5, S0}
+	
+	// state[2] = x;
+	// PSH(a0.state, a4.xh);
+	// PSH(a0.state, a3.xl);
+	PSH     A0, {A3-A4}
+	// state[0] = y;
+	// a0.state -= sizeof(uint32_t);
+	DEC     A0, 4
+	// PSH(a0.state, s0.yh);
+	// PSH(a0.state, a5.yl);
+	PSH     A0, {A5, S0}
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state);
+	LDW     FP, [SP]
+	CMP     A0, FP
+	BPT.NE
+	//*/
+	
+	// x = state[1];
+	// a0.state += sizeof(uint32_t);
+	INC     A0, 4
+	// a3.xl = POP(a0.state);
+	// a4.xh = POP(a0.state);
+	POP     A0, {A3-A4}
+	// y = state[3];
+	// a0.state += sizeof(uint32_t);
+	INC     A0, 4
+	// a5.yl = POP(a0.state);
+	// s0.yh = POP(a0.state);
+	POP     A0, {A5, S0}
+	// state[3] = x;
+	// PSH(a0.state, a4.xh);
+	// PSH(a0.state, a3.xl);
+	PSH     A0, {A3-A4}
+	// state[1] = y;
+	// a0.state -= sizeof(uint32_t);
+	DEC     A0, 4
+	// PSH(a0.state, s0.yh);
+	// PSH(a0.state, a5.yl);
+	PSH     A0, {A5, S0}
+	// a0.state -= sizeof(uint32_t);
+	DEC     A0, 4
+	
+	/*DEBUG
+	// ASSERT(a0.state == orig_state);
+	LDW     FP, [SP]
+	CMP     A0, FP
+	BPT.NE
+	//*/
+	
+	// break;
+	//FALLTHROUGH
+	
+@.next_round:
+	/*DEBUG
+	// fprintf(stderr, "After round %hu:\n", a1.round);
+	BRR     @.debug_dump_after_round
+	
+@.str_after_round:
+	.lestring "After round #"
+	
+@.debug_dump_after_round:
+	PSH     {A0-A1}
+	
+	ADR     A0, @.str_after_round
+	FCR     @puts
+	
+	// Print round as 2-digit decimal number
+	LDW     A1, [SP + 2]
+	DVU     A4:A3, A1, 10
+	ADDN.NZ A3, '0'
+	WRB.NZ  A3
+	ADD     A4, '0'
+	WRB     A4
+	WRB     ':'
+	WRB     '\n'
+	
+	// Load debug-saved original state
+	LDW     A0, [SP + 4]
+	FCR     @gimli_dump_state
+	
+	POP     {A0-A1}
+	// gimli_dump_state(state);
+	//*/
+	
+	
+	//} end for (round = 24; round > 0; --round)
+	DEC     A1
+	BRR.NZ  @.round_loop
+	
+	/*DEBUG
+	POP     {A0}
+	//*/
+	
+@.return:
+	POP     {S0-S2, FP, PC, DPC}
+
+
+.scope
+.export @gimli_absorb_byte
+/*
+Parameters:
+A0: gimli_state* g
+A1: unsigned char x
+
+Locals:
+A2: unsigned char* p
+A3: unsigned char tmp
+
+Returns: gimli_stat* g
+*/
+@gimli_absorb_byte:
+	// g->offset
+	LDW     A2, [A0 + $GIMLI_BYTES]
+	// p = g->state + g->offset
+	ADD     A2, A0
+	
+	// tmp = *p;
+	LDB     A3, [A2]
+	// tmp ^= x;
+	XOR     A3, A1
+	// *p = tmp;
+	STB     [A2], A3
+	
+	RET
+
+
+.scope
+.export @gimli_squeeze_byte
+/*
+A0: gimli_state* g
+*/
+@gimli_squeeze_byte:
+	LDW     A1, [A0 + $GIMLI_BYTES]
+	ADD     A0, A1
+	LDB     A0, [A0]
+	RET
+
+
+.scope
+.export @gimli_advance
+/*
+Parameters:
+A0: gimli_state* g
+
+Locals:
+A1: uword* p_offset;
+A2: uword offset;
+*/
+@gimli_advance:
+	// ++g->offset;
+	ADD     A1, A0, $GIMLI_BYTES
+	LDW     A2, [A1]
+	INC     A2
+	STW     [A1], A2
+	
+	// if (g->offset != GIMLI_RATE) {
+	// 	return;
+	// }
+	CMP     A2, $GIMLI_RATE
+	RET.NE
+	
+	// gimli(g->state);
+	PSH     {A1, RA, RD}
+	FCR     @gimli
+	POP     {A1}
+	
+	// g->offset = 0;
+	STW     [A1], ZERO
+	POP     {PC, DPC}
+
+
+.scope
+.export @gimli_absorb
+/*
+Parameters:
+A0: gimli_state* g
+A1: const unsigned char* m
+A2: uword len
+
+Locals:
+S0: gimli_state* g
+S1: const unsigned char* m
+S2: uword len
+*/
+$.FPOFF := 3 * 2 //S0-S2
+@gimli_absorb:
+	// if(len == 0) {
+	// 	return;
+	// }
+	MOV     A2, A2
+	RET.ZR
+	
+	PSH     {S0-S2, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// Save g, m, len
+	MOV     S0, A0
+	MOV     S1, A1
+	MOV     S2, A2
+	
+	// do {
+@.loop:
+	// c = *m++;
+	LDB     A1, [S1]
+	INC     S1
+	
+	// gimli_absorb_byte(g, c);
+	MOV     A0, S0
+	FCR     @gimli_absorb_byte
+	
+	// gimli_advance(g);
+	MOV     A0, S0
+	FCR     @gimli_advance
+	
+	// } while(--len);
+	DEC     S2
+	BRR.NZ  @.loop
+	
+	// return;
+	.assert $.FPOFF == 3 * 2 //S0-S2
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S2, FP, PC, DPC}
+
+
+.scope
+.export @gimli_squeeze
+/*
+Parameters:
+A0: gimli_state* g
+A1: unsigned char* h
+A2: uword len
+
+Locals:
+S0: gimli_state* g
+S1: unsigned char* h
+S2: uword len
+*/
+$.FPOFF := 3 * 2 //S0-S2
+@gimli_squeeze:
+	// if(len == 0) {
+	// 	return;
+	// }
+	MOV     A2, A2
+	RET.ZR
+	
+	PSH     {S0-S2, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// Save g, h, len
+	MOV     S0, A0
+	MOV     S1, A1
+	MOV     S2, A2
+	
+	// g->offset = GIMLI_RATE - 1;
+	ADD     A0, $GIMLI_BYTES
+	MOV     A1, $GIMLI_RATE - 1
+	STW     [A0], A1
+	
+	// do {
+@.loop:
+	// gimli_advance(g);
+	MOV     A0, S0
+	FCR     @gimli_advance
+	
+	// c = gimli_squeeze_byte(g);
+	MOV     A0, S0
+	FCR     @gimli_squeeze_byte
+	
+	// *h++ = c;
+	STB     [S1], A0
+	INC     S1
+	
+	// } while(--len);
+	DEC     S2
+	BRR.NZ  @.loop
+	
+	.assert $.FPOFF == 3 * 2 //S0-S2
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S2, FP, PC, DPC}
+
+
+.scope
+.export @gimli_pad
+/*
+Parameters:
+A0: gimli_state* g
+*/
+@gimli_pad:
+	PSH     {A0, FP, RA, RD}
+	INC     FP, SP, 2 //A0
+	
+	// gimli_absorb_byte(g, 0x01);
+	MOV     A1, 0x01
+	FCR     @gimli_absorb_byte
+	POP     {A0}
+	
+	// XOR last byte with 0x01
+	ADD     A0, $GIMLI_BYTES - 1
+	LDB     A1, [A0]
+	XOR     A1, 0x01
+	STB     [A0], A1
+	
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+
+.scope
+.export @gimli_hash_init
+@gimli_hash_init:
+	// Need 4 registers all set to zero to allow writing
+	// 8 bytes of zero in each PSH instruction.
+	MOV     A1, ZERO
+	MOV     A2, ZERO
+	MOV     A3, ZERO
+	
+	// g->offset = 0;
+	ADD     A0, $GIMLI_BYTES
+	STW     [A0], ZERO
+	
+	// g->state[40:48] = {0};
+	PSH     A0, {ZERO, A1-A3}
+	// g->state[32:40] = {0};
+	PSH     A0, {ZERO, A1-A3}
+	// g->state[24:32] = {0};
+	PSH     A0, {ZERO, A1-A3}
+	// g->state[16:24] = {0};
+	PSH     A0, {ZERO, A1-A3}
+	// g->state[8:16] = {0};
+	PSH     A0, {ZERO, A1-A3}
+	// g->state[0:8] = {0};
+	PSH     A0, {ZERO, A1-A3}
+	
+	RET
+
+
+// gimli_hash_update is an alias for gimli_absorb
+.scope
+@.pos:
+.loc @gimli_absorb
+.export @gimli_hash_update
+@gimli_hash_update:
+.loc @.pos
+
+
+.scope
+.export @gimli_hash_final
+@gimli_hash_final:
+	PSH     {A0-A2, FP, RA, RD}
+	INC     FP, SP, 3 * 2 //A0-A2
+	
+	// gimli_pad(g);
+	FCR     @gimli_pad
+	
+	// gimli_squeeze(g, h, len);
+	POP     {A0-A2}
+	FCR     @gimli_squeeze
+	
+	POP     {FP, PC, DPC}
+
+
+/*
+gimli_hash(
+	A0: unsigned char* h,
+	A1: uword hlen,
+	A2: const unsigned char* m,
+	A3: uword mlen
+);
+*/
+.scope
+.export @gimli_hash
+$.FPOFF := 4 * 2 //A0-A3
+@gimli_hash:
+	PSH     {A0-A3, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// Make room for `gimli_state g`
+	SUB     SP, $GIMLI_STATE_SIZEOF
+	
+	// gimli_hash_init(&g);
+	MOV     A0, SP
+	FCR     @gimli_hash_init
+	
+	// gimli_hash_update(&g, m, mlen);
+	
+	// Make A5 point to saved A2
+	ADD     A5, SP, ($GIMLI_STATE_SIZEOF) + 2 * 2
+	POP     A5, {A1-A2}
+	MOV     A0, SP
+	FCR     @gimli_hash_update
+	
+	// gimli_hash_final(&g, h, hlen);
+	
+	// Make A5 point to saved A0
+	ADD     A5, SP, $GIMLI_STATE_SIZEOF
+	POP     A5, {A1-A2}
+	MOV     A0, SP
+	FCR     @gimli_hash_final
+	
+	// No need to restore A0-A3
+	MOV     SP, FP
+	POP     {FP, PC, DPC}

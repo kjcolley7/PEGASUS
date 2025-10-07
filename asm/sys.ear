@@ -1,0 +1,17 @@
+.import "syscall_numbers.ear"
+
+.segment @SYS
+
+.loc $SYSCALL_PAGE + $SYS_EXIT
+@exit:
+
+.loc $SYSCALL_PAGE + $SYS_RANDOM
+@random:
+
+.loc $SYSCALL_PAGE + $SYS_MMAP
+@mmap:
+
+.loc $SYSCALL_PAGE + $SYS_MUNMAP
+@munmap:
+
+.assert @SYS.END@ - @SYS@ + 1 == $SYSCALL_COUNT

@@ -1,0 +1,51 @@
+.import "test_suite.ear"
+.import "memcmp.ear"
+.import "puts.ear"
+
+.scope
+@test:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	SUB     SP, 100
+	MOV     A1, SP
+	
+@.next_flag_byte:
+	RDB     A0, (0xF)
+	BRR.CS  @.got_flag
+	STB     [A1], A0
+	INC     A1
+	CMP     A1, FP
+	BRR.LT  @.next_flag_byte
+	
+	ADR     A0, @too_big_msg
+	FCR     @puts
+	ORR     S2, 1 << 0
+	BRR     @.return
+	
+@.got_flag:
+	MOV     A0, SP
+	ADR     A1, @expected_flag
+	MOV     A2, @expected_flag_end - @expected_flag
+	FCR     @memcmp
+	CMP     A0, ZERO
+	BRR.EQ  @.return
+	
+	ADR     A0, @flag_mismatch_msg
+	FCR     @puts
+	ORR     S2, 1 << 1
+	
+@.return:
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+.segment @CONST
+@too_big_msg:
+	.lestring "Flag too big!\n"
+
+@flag_mismatch_msg:
+	.lestring "Flag doesn't match!\n"
+
+@expected_flag:
+	.db "sun{test}\n"
+@expected_flag_end:

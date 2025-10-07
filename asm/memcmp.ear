@@ -1,0 +1,102 @@
+.scope
+.export @memcmp8
+@memcmp8:
+	// Free up A0
+	MOV     A3, A0
+	
+@.memcmp8_next:
+	LDB     A4, [A3]
+	LDB     A5, [A1]
+	SUB     A0, A4, A5
+	RET.NZ
+	
+	INC     A3
+	INC     A1
+	DEC     A2
+	BRR.NZ  @.memcmp8_next
+	
+	RET
+
+.export @memcmp16
+@memcmp16:
+	// Free up A0
+	MOV     A3, A0
+	
+@.memcmp16_next:
+	LDW     A4, [A3]
+	LDW     A5, [A1]
+	SUB     A0, A4, A5
+	RET.NZ
+	
+	INC     A3, 2
+	INC     A1, 2
+	DEC     A2, 2
+	BRR.NZ  @.memcmp16_next
+	
+	RET
+
+
+/*
+int memcmp(
+	const void* a, //A0 -> A3
+	const void* b, //A1
+	size_t size    //A2
+);
+*/
+.export @memcmp
+@memcmp:
+	// if(size == 0) return 0;
+	MOV     A2, A2
+	MOV.ZR  A0, ZERO
+	RET.ZR
+	
+	// Free up A0
+	MOV     A3, A0
+	
+	// Check if a and b have different alignment
+	AND     A4, A3, 1
+	AND     A5, A1, 1
+	XOR     A4, A5
+	
+	// Tail-call, landing past the MOV A3, A0
+	BRR.NZ  @.memcmp8_next
+	
+	// Same alignment, check if initially unaligned
+	MOV     A4, A4
+	BRR.ZR  @.start_aligned
+	
+	// Unaligned at first
+	LDB     A4, [A3]
+	LDB     A5, [A1]
+	SUB     A0, A4, A5
+	RET.NZ
+	
+	// a++, b++, size--
+	INC     A3
+	INC     A1
+	DEC     A2
+	
+	// Imagine calling memcmp for only one byte...
+	RET.ZR
+	
+@.start_aligned:
+	// Call memcmp16 for the bulk of the comparison.
+	// Here, we rely on memcmp16 leaving A3, A1, A2
+	// as a, b, and size (updated).
+	PSH     {RA, RD}
+	FCR     @.memcmp16_next
+	MOV     A0, A0
+	POP.NZ  {PC, DPC}
+	
+	// memcmp16 returned zero
+	
+	// Check if there's one more byte to compare
+	AND     ZERO, A2, 1
+	POP.ZR  {PC, DPC}
+	
+	// Compare final byte
+	DEC     A2
+	LDB     A4, [A3 + A2]
+	LDB     A5, [A1 + A2]
+	SUB     A0, A4, A5
+	POP     {PC, DPC}

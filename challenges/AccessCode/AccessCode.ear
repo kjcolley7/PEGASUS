@@ -1,0 +1,253 @@
+.import "gimli/gimli.ear"
+.import "memcmp.ear"
+.import "print_hex.ear"
+.import "puts.ear"
+.import "read_line.ear"
+.import "sys.ear"
+
+
+.segment @DATA
+@gimli_state:
+	.db 0
+	.loc @ + $GIMLI_STATE_SIZEOF - 1
+	.db 0
+@flag_hash:
+	.db 0
+	.loc @ + $GIMLI_HASH_DEFAULT_LEN - 1
+	.db 0
+@flag_piece:
+	.lestring "4r7_15_no" //last byte is not hashed
+.segment @TEXT
+
+
+/*
+hash_number(
+	A0: char* out_hash,
+	A1: uint16_t number
+)
+*/
+.scope
+@hash_number:
+	PSH     {A1, FP, RA, RD}
+	INC     FP, SP, 2
+	
+	MOV     A1, $GIMLI_HASH_DEFAULT_LEN
+	MOV     A2, SP
+	MOV     A3, 2
+	FCR     @gimli_hash
+	
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+
+.scope
+@flag_start:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	// gimli_hash_update(&g, "th3_", 4);
+	MOV     A1, 't' | ('h' << 8)
+	MOV     A2, '3' | ('_' << 8)
+	PSH     {A1-A2}
+	ADR     A0, @gimli_state
+	MOV     A1, SP
+	MOV     A2, 4
+	FCR     @gimli_hash_update
+	
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+
+.scope
+@compute_flag_hash:
+	$.FPOFF := 4 //S0-S1
+	PSH     {S0-S1, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	ADR     S0, @gimli_state
+	
+	// gimli_hash_init(&gimli_state);
+	MOV     A0, S0
+	FCR     @gimli_hash_init
+	
+	// gimli_hash_update(&gimli_state, "sun{", 4);
+	MOV     A0, S0
+	MOV     A2, 'n' | ('{' << 8)
+	MOV     A1, 's' | ('u' << 8)
+	PSH     {A1-A2}
+	MOV     A1, SP
+	MOV     A2, 4
+	FCR     @gimli_hash_update
+	INC     SP, 4
+	
+	// hashes "th3_" into the state
+	FCR     @flag_start
+	
+	// hashes "fun_p" into the state
+	MOV     A0, S0
+	ADR     A1, @fun_str
+	MOV     A2, 5
+	FCR     @gimli_hash_update
+	
+	// hashes '4r7_15_n' into the state
+	ADR     S1, @flag_piece
+@.hash_bytes_loop:
+	LDB     A1, [S1]
+	SHL     A1, 9
+	BRR.CC  @.after_hash_bytes
+	SRU     A1, 9
+	INC     S1
+	MOV     A0, S0
+	FCR     @gimli_absorb_byte
+	FCR     @gimli_advance
+	BRR     @.hash_bytes_loop
+@.after_hash_bytes:
+	
+	// Build "EAR}" based on instruction count (devious)
+	$.here.INSN_COUNT_LO := 0x1936
+	RDC     A3, INSN_COUNT_LO
+	$.here.INSN_COUNT_HI := 0x0000
+	RDC     A4, INSN_COUNT_HI
+	ADD     A3, ('E' | ('A' << 8)) - $.here.INSN_COUNT_LO
+	ADD     A4, ('R' | ('}' << 8)) - $.here.INSN_COUNT_HI
+	PSH     {A3-A4}
+	
+	// gimli_hash_update(&gimli_state, "EAR}", 4);
+	MOV     A0, S0
+	MOV     A1, SP
+	MOV     A2, 4
+	FCR     @gimli_hash_update
+	INC     SP, 4
+	
+	// gimli_hash_final(&gimli_state, hash, GIMLI_HASH_DEFAULT_LEN);
+	MOV     A0, S0
+	ADR     A1, @flag_hash
+	MOV     A2, $GIMLI_HASH_DEFAULT_LEN
+	FCR     @gimli_hash_final
+	
+	.assert $.FPOFF == 4 //S0-S1
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S1, FP, PC, DPC}
+
+
+.scope
+.export @main
+@main:
+	$.FPOFF := 2 //S0
+	PSH     {S0, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// char hash[GIMLI_HASH_DEFAULT_LEN];
+	$.hash.FPOFF := $.FPOFF + $GIMLI_HASH_DEFAULT_LEN
+	// char line[50];
+	$.line.FPOFF := $.hash.FPOFF + 50
+	SUB     SP, $.line.FPOFF - $.FPOFF
+	
+	FCR     @compute_flag_hash
+	
+	// int fails = 0;
+	MOV     S0, ZERO
+	
+	// while (true) {
+@.try_again:
+	// Ask for access code
+	ADR     A0, @code_prompt
+	FCR     @puts
+	
+	// int line_len = read_line(line, sizeof(line));
+	MOV     A0, SP
+	MOV     A1, 50
+	FCR     @read_line
+	
+	// Don't count newline
+	DEC     A0
+	
+	// if (line_len < 0) {
+	//     putchar('\n');
+	//     exit(1);
+	// }
+	WRBN.NG '\n'
+	MOVN.NG A0, 1
+	FCR.NG  @exit
+	
+	// if (line_len == 6 && !memcmp(line, "forgot", 6)) {
+	CMP     A0, 6
+	BRR.NE  @.check_code
+	MOV     A1, SP
+	POP     A1, {A2-A4}
+	CMP     A2, 'f' | ('o' << 8)
+	CMP.EQ  A3, 'r' | ('g' << 8)
+	CMP.EQ  A4, 'o' | ('t' << 8)
+	BRR.NE  @.check_code
+	
+	//     printf("Hint: hash(access_code) = \"%s\"\n", flag_hash);
+	ADR     A0, @hint_msg
+	FCR     @puts
+	ADR     A0, @flag_hash
+	MOV     A1, $GIMLI_HASH_DEFAULT_LEN
+	FCR     @print_hex
+	WRB     '"'
+	WRB     '\n'
+	
+	//     continue;
+	// }
+	BRR     @.try_again
+	
+@.check_code:
+	// gimli_hash(hash, sizeof(hash), line, line_len);
+	MOV     A3, A0
+	SUB     A0, FP, $.hash.FPOFF
+	MOV     A1, $GIMLI_HASH_DEFAULT_LEN
+	MOV     A2, SP
+	FCR     @gimli_hash
+	
+	/// if (!memcmp(hash, flag_hash, sizeof(hash)) != 0) {
+	SUB     A0, FP, $.hash.FPOFF
+	ADR     A1, @flag_hash
+	MOV     A2, $GIMLI_HASH_DEFAULT_LEN
+	FCR     @memcmp
+	CMP     A0, ZERO
+	BRR.NE  @.wrong_code
+	
+	// puts("Access granted!\n");
+	// return;
+	ADR     A0, @im_in_msg
+	FCR     @puts
+	BRR     @.return
+	
+@.wrong_code:
+	// puts("Invalid access code, please try again.\n");
+	ADR     A0, @code_wrong
+	FCR     @puts
+	
+	// if (++fails >= 3) {
+	INC     S0
+	CMP     S0, 3
+	BRR.LT  @.try_again
+	
+	// puts("If you forgot the security access code, please type \"forgot\".\n");
+	ADR     A0, @need_hint
+	FCR     @puts
+	
+	// }
+	BRR     @.try_again
+	
+@.return:
+	.assert $.FPOFF == 2 //S0
+	MOV     A0, ZERO
+	DEC     SP, FP, $.FPOFF
+	POP     {S0, FP, PC, DPC}
+
+
+.segment @CONST
+@code_prompt:
+	.lestring "Input security access code:\n> "
+@code_wrong:
+	.lestring "Invalid access code, please try again.\n"
+@fun_str:
+	.db "fun_p"
+@need_hint:
+	.lestring "If you forgot the security access code, please type \"forgot\".\n"
+@hint_msg:
+	.lestring "Hint: hash(access_code) = \""
+@im_in_msg:
+	.lestring "Access granted!\n"

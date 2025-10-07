@@ -1,0 +1,27 @@
+.import "test_suite.ear"
+.import "constants.ear"
+
+.scope
+@test:
+	// Round SP down to the page boundary
+	MOV     S0, SP
+	AND     SP, ~($PAGE_SIZE - 1)
+	
+	// Make SP just above the page boundary so a PSH with 2 registers will
+	// cross the page boundary
+	INC     SP, 2
+	MOV     A2, SP
+	
+	// Pushing A1 will work normally, pushing A0 will fault and hopefully be
+	// automatically resumed
+	MOV     A0, 0xA0A0
+	MOV     A1, 0xA1A1
+	PSH     {A0, A1}
+	
+	DEC     A2, 4
+	CMP     SP, A2
+	BPT.NE
+	ORR.NE  S2, 1 << 0
+	
+	MOV     SP, S0
+	RET

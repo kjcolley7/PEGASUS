@@ -1,18 +1,59 @@
 PEG_DIR := $(DIR)
+PEG_BUILD := $(BUILD_DIR)
 PEG_BIN := $(PEG_DIR)/bin
-PEG_BUILD := $(BUILD)/$(PEG_DIR)
+LIB_DIR := $(PEG_DIR)/libraries
+BOOTROM_DIR := $(PEG_DIR)/bootrom
+BOOTROM := $(PEG_BIN)/boot.peg
+
+ifdef IS_MAC
+CONFIG_USE_PWNCC :=
+CONFIG_NO_EXTRA_FLAGS := 1
+
+DEFAULT_CC := clang
+DEFAULT_LD := clang
+CC := clang
+LD := clang
+
+PEG_BIN := $(PEG_BIN)/mac
+endif #IS_MAC
+
+PEG_SAVED_DEFAULT_BITS   := $(DEFAULT_BITS)
+PEG_SAVED_DEFAULT_ASLR   := $(DEFAULT_ASLR)
+PEG_SAVED_DEFAULT_RELRO  := $(DEFAULT_RELRO)
+PEG_SAVED_DEFAULT_NX     := $(DEFAULT_NX)
+PEG_SAVED_DEFAULT_CANARY := $(DEFAULT_CANARY)
+PEG_SAVED_DEFAULT_STRIP  := $(DEFAULT_STRIP)
+PEG_SAVED_DEFAULT_DEBUG  := $(DEFAULT_DEBUG)
+PEG_SAVED_DEFAULT_CFLAGS := $(DEFAULT_CFLAGS)
+
+DEFAULT_BITS := 64
+DEFAULT_ASLR := 1
+DEFAULT_RELRO := 1
+DEFAULT_NX := 1
+DEFAULT_CANARY := 1
+DEFAULT_STRIP := 0
+DEFAULT_DEBUG := 1
+DEFAULT_CFLAGS := \
+	-Wall \
+	-Wextra \
+	-Werror \
+	-Wno-dangling-else \
+	-I$(PEG_DIR) \
+	-I$(LIB_DIR)
+
+
 PEG_PATH := $(abspath $(PEG_BIN)):$(PATH)
 PEG_SESSIONS_MOUNT_ARG := --volumes-from pegsession
 PEG_SESSIONS_MOUNT_POINT := /pegasus-sessions
 PEG_SESSIONS_START_DEP := docker-start[pegsession]
 
 # Ports!
-PEGSESSION_PORT := 22700
-PEG_DEBUG_PORT := 22701
-PEG_DEBUG_SSH_PORT := 22702
-PEG_AUTOREV_PORT := 22703
-PEG_CHEAT_PORT := 22704
-PEG_AUTOREV2_PORT := 22705
+PEGSESSION_PORT := 25700
+# PEG_DEBUG_PORT := 22701
+# PEG_DEBUG_SSH_PORT := 22702
+# PEG_AUTOREV_PORT := 22703
+# PEG_CHEAT_PORT := 22704
+# PEG_AUTOREV2_PORT := 22705
 
 ifdef PYTHONPATH
 PEG_PYTHONPATH := $(PYTHONPATH):$(abspath $(PEG_DIR))
@@ -20,59 +61,27 @@ else
 PEG_PYTHONPATH := $(abspath $(PEG_DIR))
 endif
 
-TARGET := libkjc_argparse.a
-PRODUCT := $(PEG_BIN)/$(TARGET)
-
-SRCS := kjc_argparse/kjc_argparse.c
-
-CFLAGS := -Wall -Wextra -Wno-dangling-else -I$(PEG_DIR)
-BITS := 64
-ASLR := 1
-RELRO := 1
-NX := 1
-CANARY := 1
-DEBUG := 1
-
-# Rule to ensure the submodule is cloned
-$(PEG_DIR)/kjc_argparse/kjc_argparse.c $(PEG_DIR)/kjc_argparse/kjc_argparse.h:
-	$(_V)echo 'Pulling git submodules...'
-	$(_v)cd $(PEG_DIR) && git submodule update --init --recursive
-
 
 EARASM := PYTHONPATH="$(PEG_PYTHONPATH)" python3 -m earasm
+EARASMFLAGS := \
+	-I $(PEG_DIR) \
+	-I $(PEG_DIR)/asm \
+	-I $(PEG_BUILD)
 
-.PHONY: check check-python check-ear
+EAR_EXTRA := $(PEG_DIR)/asm/start.ear
 
-check: check-python check-ear
+.PHONY: check
 
-check-python:
-	$(_v)pytest $(PEG_DIR)
-
-# Rule for assembling EAR assembly code into PEGASUS binaries
+# Rule for assembling EAR assembly code into PEGASUS binaries (in-place)
 $(PEG_DIR)/%.peg: $(PEG_DIR)/%.ear
-	$(_V)echo 'Assembling $<'
-	$(_v)$(EARASM) $< $@
+	$(_V)echo 'Assembling $*.ear'
+	$(_v)$(EARASM) $(EARASMFLAGS) -o $@ $< $(EAR_EXTRA)
 
-
-#####
-# checkrule($1: path to input peg/tests/<test>.ear w/o extension, $2: path to the output .peg file)
-#####
-define _checkrule
-
-$2: $1.ear
-	@echo 'Assembling $$<'
-	@mkdir -p $$(@D)
-	$$(_v)$$(EARASM) $$< $$@
-
-check-ear:: $2 $$(PEG_BIN)/runpeg
-	$$(_v)$$(PEG_BIN)/runpeg $2 > $1.actual && diff -w $1.expected $1.actual && echo "PASS $$(basename $1)" || echo "FAIL $$(basename $1)"
-
-clean::
-	$(_v)rm -f $2
-
-endef #_checkrule
-checkrule = $(eval $(call _checkrule,$1,$2))
-#####
+# Rule for assembling EAR assembly code into PEGASUS binaries (separate build dir)
+$(PEG_BUILD)/%.peg: $(PEG_DIR)/%.ear
+	$(_V)echo 'Assembling $*.ear'
+	$(_v)mkdir -p $(@D)
+	$(_v)$(EARASM) $(EARASMFLAGS) -o $@ $< $(EAR_EXTRA)
 
 
 #####
@@ -108,15 +117,3 @@ endif #IS_LINUX
 endef
 make_loadable_exe = $(eval $(call _make_loadable_exe,$1))
 #####
-
-
-PEG_CHECK_FILES := $(wildcard $(PEG_DIR)/tests/*.expected)
-$(foreach f,$(PEG_CHECK_FILES),$(call checkrule,$(f:.expected=),$(patsubst $(PEG_DIR)/%.expected,$(PEG_BUILD)/%.peg,$f)))
-
-
-PUBLISH := \
-	bin/libpegasus_ear.so \
-	bin/runpeg \
-	bin/submitpeg \
-	docs/EAR_EAR_v2.md \
-	docs/PEGASUS.md

@@ -1,0 +1,13 @@
+//memset(A0: void* ptr, A1: char c, A2: int size)
+.scope
+.export @memset_simple
+@memset_simple:
+	ADD     A2, A0
+
+@.next_byte:
+	STB     [A0], A1
+	INC     A0
+	CMP     A0, A2
+	BRR.LT  @.next_byte
+	
+	RET

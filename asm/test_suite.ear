@@ -1,0 +1,17 @@
+.scope
+.export @main
+@main:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	// Tracks failing tests, used as exit code
+	MOV     S2, ZERO
+	
+	FCR     @test
+	
+	// Exit with bitmap of failed tests as the exit code
+	MOV     A0, S2
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+.export @test

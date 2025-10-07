@@ -1,0 +1,57 @@
+// Memory page geometry
+$PAGE_SHIFT := 8
+$PAGE_SIZE := 1 << $PAGE_SHIFT
+$PAGES_PER_REGION := 0x100
+$REGION_SIZE := $PAGES_PER_REGION * $PAGE_SIZE
+
+// mmap protection flags
+$PROT_READ := 1 << 0
+$PROT_WRITE := 1 << 1
+$PROT_EXECUTE := 1 << 2
+$PROT_EXEC := $PROT_EXECUTE
+
+// mmap flags
+$MAP_SHARED := 0x0001
+$MAP_PRIVATE := 0x0002
+
+$MAP_FIXED := 0x0010
+
+$MAP_FILE := 0x0000
+$MAP_ANONYMOUS := 0x1000
+$MAP_ANON := $MAP_ANONYMOUS
+
+$MAP_FAILED := -1
+
+// Instruction opcodes
+$OP_ADD := 0x00
+$OP_SUB := 0x01
+$OP_MLU := 0x02
+$OP_MLS := 0x03
+$OP_DVU := 0x04
+$OP_DVS := 0x05
+$OP_XOR := 0x06
+$OP_AND := 0x07
+$OP_ORR := 0x08
+$OP_SHL := 0x09
+$OP_SRU := 0x0A
+$OP_SRS := 0x0B
+$OP_MOV := 0x0C
+$OP_CMP := 0x0D
+$OP_RDC := 0x0E
+$OP_WRC := 0x0F
+$OP_LDW := 0x10
+$OP_STW := 0x11
+$OP_LDB := 0x12
+$OP_STB := 0x13
+$OP_BRA := 0x14
+$OP_BRR := 0x15
+$OP_FCA := 0x16
+$OP_FCR := 0x17
+$OP_RDB := 0x18
+$OP_WRB := 0x19
+$OP_PSH := 0x1A
+$OP_POP := 0x1B
+$OP_INC := 0x1C
+$OP_BPT := 0x1D
+$OP_HLT := 0x1E
+$OP_NOP := 0x1F

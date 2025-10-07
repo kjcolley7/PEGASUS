@@ -1,0 +1,91 @@
+.scope
+.export @memcpy8
+@memcpy8:
+	MOV     A2, A2
+	RET.ZR
+	
+	// Free up A0
+	MOV     A3, A0
+	
+@.memcpy8_next:
+	LDB     A4, [A1]
+	INC     A1
+	STB     [A3], A4
+	INC     A3
+	DEC     A2
+	BRR.NZ  @.memcpy8_next
+	
+	RET
+
+.export @memcpy16
+@memcpy16:
+	// Free up A0
+	MOV     A3, A0
+	
+@.memcpy16_next:
+	DEC     A2, 2
+	BRR.LT  @.memcpy16_done
+	LDW     A4, [A1]
+	INC     A1, 2
+	STW     [A3], A4
+	INC     A3, 2
+	BRR     @.memcpy16_next
+	
+@.memcpy16_done:
+	RET
+
+
+/*
+void* memcpy(
+	void* a,       //A0 -> A3
+	const void* b, //A1
+	size_t size    //A2
+);
+*/
+.export @memcpy
+@memcpy:
+	MOV     A2, A2
+	RET.ZR
+	
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	// Free up A0
+	MOV     A3, A0
+	
+	// Check if a and b have different alignment
+	AND     A4, A3, 1
+	AND     A5, A1, 1
+	XOR     A4, A5
+	
+	// Tail-call, landing past the MOV A3, A0
+	BRR.NZ  @.memcpy8_next
+	
+	// Same alignment, check if initially unaligned
+	MOV     A4, A4
+	BRR.ZR  @.start_aligned
+	
+	// Unaligned at first
+	LDB     A4, [A1]
+	INC     A1
+	STB     [A3], A4
+	INC     A3
+	DEC     A2
+	
+	// Imagine calling memcpy for only one byte...
+	RET.ZR
+	
+@.start_aligned:
+	// Call memcpy16 for the bulk of the copy.
+	// Here, we rely on memcpy16 leaving A3, A1, A2
+	// as a, b, and size (updated).
+	FCR     @.memcpy16_next
+	
+	// Check if there's one more byte to copy
+	AND     ZERO, A2, 1
+	POP.ZR  {FP, PC, DPC}
+	
+	// Copy final byte
+	LDB     A4, [A1]
+	STB     [A3], A4
+	POP     {FP, PC, DPC}

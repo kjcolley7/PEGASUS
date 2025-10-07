@@ -1,0 +1,2 @@
+TARGET := gimli
+PRODUCT := $(PEG_BIN)/$(TARGET)

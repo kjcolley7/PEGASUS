@@ -1,0 +1,23 @@
+.import "test_suite.ear"
+
+.scope
+@test:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	// should work
+	RDC     A0, CREG_DENY_R
+	CMP     A0, 0x7FC0
+	BPT.NE
+	ORR.NE  S2, 1 << 0
+	
+	// should work
+	RDC     A0, INSN_COUNT_LO
+	RDC     A1, INSN_COUNT_LO
+	SUB     A1, A0
+	CMP     A1, 1
+	BPT.NE
+	ORR.NE  S2, 1 << 1
+	
+	MOV     SP, FP
+	POP     {FP, PC, DPC}

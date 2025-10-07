@@ -1,15 +1,20 @@
 TARGET := runpeg
 PRODUCT := $(PEG_BIN)/$(TARGET)
 
-LIBS := $(PEG_BIN)/libpegasus_ear.so $(PEG_BIN)/libkjc_argparse.a
+RUNPEG_DIR := $(DIR)
 
-$(DIR)/runpeg.c: $(PEG_DIR)/kjc_argparse/kjc_argparse.h
+LIBS := \
+	$(PEG_BIN)/libear.so \
+	$(PEG_BIN)/libeardbg.so \
+	$(PEG_BIN)/libkjc_argparse.a
+
+SRCS := runpeg.c bootrom.c
+
+$(RUNPEG_DIR)/runpeg.c: $(PEG_DIR)/kjc_argparse/kjc_argparse.h
+
+$(RUNPEG_DIR)/bootrom.c: $(BOOTROM)
+	$(_v)xxd -i -C -n BOOTROM $< $@
 
 LDLIBS := -ldl
-CFLAGS := -Wall -Wextra -Wno-dangling-else -I$(PEG_DIR)
-BITS := 64
-ASLR := 1
-RELRO := 1
-NX := 1
-CANARY := 1
-DEBUG := 1
+
+PUBLISH_TOP := $(PRODUCT)

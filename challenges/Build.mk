@@ -1,0 +1,1 @@
+CLEAN := peg-challenges-clean

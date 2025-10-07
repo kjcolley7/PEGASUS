@@ -1,0 +1,4 @@
+TARGET := libear.so
+PRODUCT := $(PEG_BIN)/$(TARGET)
+
+PUBLISH_TOP := $(PRODUCT)

@@ -1,0 +1,4 @@
+@main:
+	MOV     A1, 0x9876
+	LDW     A0, [A1]
+	HLT

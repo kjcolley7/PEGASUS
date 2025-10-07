@@ -1,0 +1,25 @@
+{
+  "name": "earasm",
+  "displayName": "ear",
+  "description": "EAR Assembly Language",
+  "version": "3.0.0",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "earasm",
+      "aliases": ["EarASM", "earasm"],
+      "extensions": [".ear"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "earasm",
+      "scopeName": "source.earasm",
+      "path": "./syntaxes/earasm.tmLanguage.json"
+    }]
+  }
+}

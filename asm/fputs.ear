@@ -1,0 +1,79 @@
+/*
+fputc(A0: char c, A1: int port)
+*/
+.scope
+.export @fputc
+@fputc:
+	SHL     A1, 2                  // Convert from index to offset into array of 4-byte instructions
+	ADD     PC, A1
+	
+@.start:
+	WRB     (0), A0
+	RET
+	WRB     (1), A0
+	RET
+	WRB     (2), A0
+	RET
+	WRB     (3), A0
+	RET
+	WRB     (4), A0
+	RET
+	WRB     (5), A0
+	RET
+	WRB     (6), A0
+	RET
+	WRB     (7), A0
+	RET
+	WRB     (8), A0
+	RET
+	WRB     (9), A0
+	RET
+	WRB     (0xA), A0
+	RET
+	WRB     (0xB), A0
+	RET
+	WRB     (0xC), A0
+	RET
+	WRB     (0xD), A0
+	RET
+	WRB     (0xE), A0
+	RET
+	WRB     (0xF), A0
+	RET
+	.assert @ - @.start == 4 * 16
+
+/*
+void fputs(
+	const char* s, //A0 -> A2
+	int port       //A1
+) {
+	u16 c;             //A0
+	u16 ascii = 0x7f;  //A3
+	char byte;         //A4
+	do {
+		byte = *s++;
+		c = byte & ascii;
+		fputc(c, port);
+	} while(byte != c);
+}
+*/
+.scope
+.export @fputs
+@fputs:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	MOV     A2, A0                 // Free up A0 for the char (as arg to fputc)
+	MOV     A3, 0x7f               // Create mask for the ASCII character bits
+	
+@.next_char:
+	LDB     A4, [A2]               // Load character from string
+	INC     A2                     // Increment string pointer
+	AND     A0, A4, A3             // Mask off the continuation bit
+	
+	FCR     @fputc                 // Write ASCII character to target port
+	CMP     A0, A4                 // Check for continuation bit
+	BRR.NE  @.next_char            // Continuation bit was set, keep iterating through the string
+	
+	MOV     SP, FP
+	POP     {FP, PC, DPC}

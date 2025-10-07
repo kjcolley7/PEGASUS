@@ -1,5 +1,0 @@
-.scope
-.export @main
-@main:
-	LDB RV, [ZERO]
-	HLT

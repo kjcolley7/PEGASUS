@@ -1,0 +1,61 @@
+/*
+int read_line(A0 -> A2: char* buffer, A1: size_t size) {
+	int value; //A3
+	int bytes_read = 0; //A0
+	
+	while(bytes_read < size && (value = port_read(stdio)) != EOF) {
+		++bytes_read;
+		*buffer++ = value;
+		
+		if(value == '\n') {
+			break;
+		}
+	}
+	
+	return bytes_read;
+}
+*/
+.scope
+.export @read_line
+
+// A0 = bytes_read
+// A1 = size
+// A2 = buffer
+// A3 = value
+@read_line: //LEAF
+	// Move buffer out of the way of A0
+	MOV     A2, A0
+	
+	// bytes_read = 0;
+	MOV     A0, ZERO
+	BRR     @.while_cond
+	
+@.while_body:
+	/*
+	++bytes_read;
+	*buffer++ = value;
+	
+	if(value == '\n') {
+		break;
+	}
+	*/
+	INC     A0
+	STB     [A2], A3
+	INC     A2
+	CMP     A3, '\n'
+	RET.EQ
+	
+	
+@.while_cond:
+	// bytes_read < size
+	CMP     A0, A1
+	RET.GE
+	
+	// (value = port_read(stdio)) != EOF
+	RDB     A3
+	BRR.CC  @.while_body
+	
+	// Hit EOF!
+	// return ~bytes_read
+	INV     A0
+	RET

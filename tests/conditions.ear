@@ -1,0 +1,12 @@
+.import "test_suite.ear"
+.scope
+@test:
+	MOV     A0, 3
+	MOV     A1, -4
+	CMP     A0, A1
+	BPT.GT
+	ORR.GT  S2, 1 << 0
+	BPT.SE
+	ORR.SE  S2, 1 << 1
+	
+	RET

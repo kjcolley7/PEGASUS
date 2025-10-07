@@ -1,0 +1,4 @@
+.export @sys_random
+@sys_random:
+	MOV     !A0, 4  //Chosen by a fair dice roll
+	BRR     @return_from_syscall

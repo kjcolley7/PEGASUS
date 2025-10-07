@@ -1,0 +1,55 @@
+.import "constants.ear"
+
+.scope
+@_fill_region:
+	// Will be going backwards (due to PSH decrementing the base register),
+	// so start with an underflow from 0x0000
+	MOV     A0, ZERO
+	MOV     A1, 1 | (1 << $PAGE_SHIFT)
+	
+	// A2-FP need to start at 0xFFFF
+	DEC     A2, ZERO, 1
+	MOV     A3, A2
+	MOV     A4, A2
+	MOV     A5, A2
+	MOV     S0, A2
+	MOV     S1, A2
+	MOV     S2, A2
+	MOV     FP, A2
+	BRR     @.fill_page
+	
+@.next_page:
+	// Set all 8 registers A2-FP to be 0xPGPG, where PG is the page number.
+	// Assuming they are already set to the correct value for PG+1, just
+	// subtract 0x0101 from each of these values.
+	SUB     A2, A1
+	SUB     A3, A1
+	SUB     A4, A1
+	SUB     A5, A1
+	SUB     S0, A1
+	SUB     S1, A1
+	SUB     S2, A1
+	SUB     FP, A1
+	
+@.fill_page:
+	// Unroll loop. 16 iterations, each writing 16 bytes, 256 bytes total
+	PSH     A0, {A2-FP} //0
+	PSH     A0, {A2-FP} //1
+	PSH     A0, {A2-FP} //2
+	PSH     A0, {A2-FP} //3
+	PSH     A0, {A2-FP} //4
+	PSH     A0, {A2-FP} //5
+	PSH     A0, {A2-FP} //6
+	PSH     A0, {A2-FP} //7
+	PSH     A0, {A2-FP} //8
+	PSH     A0, {A2-FP} //9
+	PSH     A0, {A2-FP} //A
+	PSH     A0, {A2-FP} //B
+	PSH     A0, {A2-FP} //C
+	PSH     A0, {A2-FP} //D
+	PSH     A0, {A2-FP} //E
+	PSH     A0, {A2-FP} //F
+	
+	MOV     A0, A0
+	BRR.NZ  @.next_page
+	RET

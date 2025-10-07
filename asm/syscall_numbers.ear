@@ -1,0 +1,6 @@
+$SYSCALL_PAGE := 0xFF00
+$SYS_EXIT      := 0
+$SYS_RANDOM    := 1
+$SYS_MMAP      := 2
+$SYS_MUNMAP    := 3
+$SYSCALL_COUNT := 4

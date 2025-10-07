@@ -1,0 +1,74 @@
+.import "puts.ear"
+.import "read_line.ear"
+.import "sys.ear"
+
+
+.scope
+.export @win
+@win:
+@.next_char:
+	RDB     A0, (0xF)
+	BRR.CS  @.done
+	WRB     A0
+	BRR     @.next_char
+	
+@.done:
+	MOV     A0, ZERO
+	FCR     @exit
+
+
+.scope
+.export @main
+@main:
+	$.FPOFF := 2 //S0
+	PSH     {S0, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	ADR     A0, @banner_msg
+	FCR     @puts
+	
+	ADR     A0, @prompt_username_msg
+	FCR     @puts
+	
+	// char name[50];
+	SUB     SP, 50
+	
+	// int len = read_line(name, 100);
+	MOV     A0, SP
+	MOV     A1, 100
+	FCR     @read_line
+	MOV     S0, A0
+	DEC     S0 //remove newline
+	
+	ADR     A0, @hello_msg
+	FCR     @puts
+	
+	MOV     A0, SP
+	ADD     A1, A0, S0
+	
+@.print_loop:
+	CMP     A0, A1
+	BRR.GE  @.done
+	LDB     A2, [A0]
+	INC     A0
+	WRB     A2
+	BRR     @.print_loop
+	
+@.done:
+	WRB     '!'
+	WRB     '\n'
+	
+	MOV     A0, ZERO
+	.assert $.FPOFF == 2 //S0
+	DEC     SP, FP, $.FPOFF
+	POP     {S0, FP, PC, DPC}
+
+.segment @CONST
+@banner_msg:
+	.lestring "EAR-SAT-7 Terminal v2.3.1\nConnected to: GEO-SAT-042 (Altitude: 35,786 km)\nUplink: 14.2 GHz | Downlink: 11.8 GHz\nSignal Strength: -67 dBm | Latency: 548ms\n\n*** AUTHORIZED ACCESS ONLY ***\nAll communications are monitored and logged.\nUnauthorized access is strictly prohibited.\n\n"
+
+@prompt_username_msg:
+	.lestring "Enter username: "
+
+@hello_msg:
+	.lestring "Welcome, "

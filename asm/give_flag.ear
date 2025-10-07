@@ -1,0 +1,16 @@
+/*
+void give_flag(void) {
+	char c;
+	while(rdb(FLAG_PORT, &c)) {
+		wrb(c);
+	}
+}
+*/
+.scope
+.export @give_flag
+@give_flag:
+@.next_char:
+	RDB     A0, (0xF)
+	RET.CS
+	WRB     A0
+	BRR     @.next_char

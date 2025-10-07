@@ -1,0 +1,35 @@
+/*
+void puts(
+	const char* s //A0
+) {
+	//if(s == NULL) {
+	//	return;
+	//}
+	
+	char byte;         //A1
+	u16 c;             //A2
+	u16 ascii = 0x7f;  //A3
+	do {
+		byte = *s++;
+		c = byte & ascii;
+		WRB(c);
+	} while(byte != c);
+}
+*/
+.scope
+.export @puts
+@puts: //LEAF
+	// MOV     A0, A0              // NULL check (more lightweight than CMP)
+	// RET.ZR                      // Return if NULL
+	
+	MOV     A3, 0x7f               // Create mask for the ASCII character bits
+	
+@.next_char:
+	LDB     A1, [A0]               // Load character from string
+	INC     A0                     // Increment string pointer
+	AND     A2, A1, A3             // Mask off the continuation bit
+	WRB     A2                     // Write ASCII character
+	CMP     A1, A2                 // Check for continuation bit
+	BRR.NE  @.next_char            // Continuation bit was set, keep iterating through the string
+	
+	RET

@@ -1,0 +1,19 @@
+.scope
+.export @sys_mmap
+@sys_mmap:
+	MOV     A0, @sys_mmap_msg
+	FCR     @panic
+
+
+.scope
+.export @sys_munmap
+@sys_munmap:
+	MOV     A0, @sys_munmap_msg
+	FCR     @panic
+
+
+.segment @ROMDATA
+@sys_mmap_msg:
+	.lestring "Syscall: mmap\n"
+@sys_munmap_msg:
+	.lestring "Syscall: munmap\n"

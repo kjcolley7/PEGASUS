@@ -1,0 +1,15 @@
+.scope
+.export @read_int
+@read_int:
+	MOV     A0, ZERO
+	MOV     A2, 10
+	
+@.next_char:
+	RDB     A1
+	RET.CS
+	SUB     A0, '0'
+	CMP     A0, A2
+	RET.GE
+	MLU     A0, A2
+	ADD     A0, A1
+	BRR     @.next_char

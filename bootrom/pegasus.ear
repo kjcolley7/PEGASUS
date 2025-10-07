@@ -1,0 +1,309 @@
+.import "constants.ear"
+.import "ram.ear"
+
+/*
+void Pegasus_loadSegment(
+	Pegasus_Segment* seg: A0
+);
+
+A1: virtual_page
+A2: file_page
+A3: present_page_count
+A4: absent_page_count
+A5: prot
+
+S0: tte_read
+S1: tte_write
+S2: tte_execute
+*/
+.scope
+.export @Pegasus_loadSegment
+$.FPOFF := 6 //S0-S2
+@Pegasus_loadSegment:
+	PSH     {S0-S2, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// virtual_page
+	LDB     A1, [A0]
+	INC     A0
+	// file_page
+	LDB     A2, [A0]
+	INC     A0
+	
+	// Apply region number to file_page while we still
+	// have A0 (points within PEGASUS file)
+	SRU     A3, A0, $PAGE_SHIFT - 1
+	LDW     A3, [A3 + @ttbr]   //physical page number
+	AND     A3, 0xFF00         //mask to just region
+	ORR     A2, A3             //apply region number
+	
+	// present_page_count
+	LDB     A3, [A0]
+	INC     A0
+	// absent_page_count
+	LDB     A4, [A0]
+	INC     A0
+	// prot
+	LDB     A5, [A0]
+	// A0 is now free
+	
+	// EAR_PROT_READ?
+	AND     A0, A5, $PROT_READ
+	PSH     {A0}
+	
+	// EAR_PROT_WRITE?
+	AND     A0, A5, $PROT_WRITE
+	PSH     {A0}
+	
+	// EAR_PROT_EXECUTE?
+	AND     A0, A5, $PROT_EXECUTE
+	PSH     {A0}
+	
+	// SP offsets
+	$.has_read := 4
+	$.has_write := 2
+	$.has_execute := 0
+	
+	// Prepare PTE pointers
+	SHL     A1, 1
+	ADD     S0, A1, @ttbru
+	ADD     S1, A1, @ttbwu
+	ADD     S2, A1, @ttbxu
+	// A1 is now free
+	
+	// Check present_page_count
+	MOV     ZERO, A3
+	BRR.ZR  @.map_ram_pages
+	
+	// A0 will now be used for any CoW PTEs
+	MOV     A0, $PTE_COW
+	
+@.present_loop:
+@.present_map_r:
+	LDW     ZERO, [SP + $.has_read]
+	BRR.ZR  @.present_map_w
+	STW     [S0], A2
+	INC     S0, 2
+	
+@.present_map_w:
+	LDW     ZERO, [SP + $.has_write]
+	BRR.ZR  @.present_map_x
+	STW     [S1], A0    //Use $PTE_COW
+	INC     S1, 2
+	
+@.present_map_x:
+	LDW     ZERO, [SP + $.has_execute]
+	BRR.ZR  @.present_map_done
+	STW     [S2], A2
+	INC     S2, 2
+	
+@.present_map_done:
+	// file_page++; present_count--;
+	INC     A2
+	DEC     A3
+	BRR.NZ  @.present_loop
+	// A0, A1, A2, and A3 are now free
+	
+@.map_ram_pages:
+	// Check absent_page_count
+	MOV     ZERO, A4
+	BRR.ZR  @.return
+	
+	// Map absent pages as zero-filled, meaning they
+	// are only backed by RAM after the first access.
+	MOV     A2, $PTE_ZERO
+	
+@.absent_loop:
+@.absent_map_r:
+	LDW     ZERO, [SP + $.has_read]
+	BRR.ZR  @.absent_map_w
+	STW     [S0], A2
+	INC     S0, 2
+	
+@.absent_map_w:
+	LDW     ZERO, [SP + $.has_write]
+	BRR.ZR  @.absent_map_x
+	STW     [S1], A2
+	INC     S1, 2
+	
+@.absent_map_x:
+	LDW     ZERO, [SP + $.has_execute]
+	BRR.ZR  @.absent_map_done
+	STW     [S2], A2
+	INC     S2, 2
+	
+@.absent_map_done:
+	// absent_count--;
+	DEC     A4
+	BRR.NZ  @.absent_loop
+	
+@.return:
+	// All done!
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S2, FP, PC, DPC}
+	
+@.no_mem:
+	MOV     A0, @no_mem_msg
+	FCR     @panic
+
+.segment @ROMDATA
+@no_mem_msg:
+	.lestring "Not enough RAM pages to map segment!\n"
+
+.segment @ROM
+
+.scope
+.export @Pegasus_loadEntrypoint
+@Pegasus_loadEntrypoint:
+	// Surprisingly easy!
+	POP     A0, !{R1-R15}
+	RET
+
+.scope
+.export @Pegasus_loadSymtab
+@Pegasus_loadSymtab:
+	// TODO: Allow importing symbols...
+	RET
+
+.scope
+.export @Pegasus_loadReltab
+@Pegasus_loadReltab:
+	// TODO: Allow relocations...
+	RET
+
+
+/*
+void Pegasus_loadCommand(
+	Pegasus_Cmd* cmd
+);
+*/
+.scope
+.export @Pegasus_loadCommand
+@Pegasus_loadCommand:
+	LDW     A1, [A0 + 2]
+	INC     A0, 4     //skip cmd_size and cmd_type
+	DEC     A1
+	SHL     A1, 1
+	CMP     A1, 6
+	BRR.LE  @.jmptable
+	
+	MOV     A0, @badtype_msg
+	FCR     @panic
+	
+.align 2
+	NOP
+@.jmptable:
+@pegcmd_handler:
+	LDW     PC, [PC + A1]
+.dw @Pegasus_loadSegment
+.dw @Pegasus_loadEntrypoint
+.dw @Pegasus_loadSymtab
+.dw @Pegasus_loadReltab
+
+.segment @ROMDATA
+@badtype_msg:
+	.lestring "Bad load command type!\n"
+
+.segment @ROM
+
+/*
+void Pegasus_load(
+	Pegasus_Header* peg: A0,
+	size_t size: A1
+);
+*/
+.scope
+.export @Pegasus_load
+$.FPOFF := 6 //S0-S2
+@Pegasus_load:
+	PSH     {S0-S2, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// Ensure there's enough space for the header
+	MOV     S2, A1
+	SUB     S2, 14
+	BRR.LT  @.too_small
+	
+	// Check magic
+	MOV     S0, A0
+	MOV     A1, @pegmagic
+	MOV     A2, 8
+	FCR     @memcmp16
+	MOV     A0, A0
+	BRR.NZ  @.badmagic
+	INC     S0, 8
+	
+	// Check arch
+	MOV     A0, S0
+	MOV     A1, @pegarch
+	MOV     A2, 4
+	FCR     @memcmp16
+	MOV     A0, A0
+	BRR.NZ  @.badarch
+	INC     S0, 4
+	
+	// Get number of load commands
+	LDW     S1, [S0]
+	INC     S0, 2
+	
+	// Loop through each load command
+@pegcmd_loop:
+@.nextcmd:
+	MOV     ZERO, S1
+	BRR.ZR  @.return
+	DEC     S1
+	
+	// Update S0 to point to the next load command,
+	// then call Pegasus_loadCommand(cmd, size)
+	MOV     A0, S0
+	LDW     A1, [S0]      //cmd_size
+	ADD     S0, A1
+	
+	// size -= cmd_size; if(overflowed) panic();
+	SUB     S2, A1
+	BRR.LT  @.too_small
+	
+	FCR     @Pegasus_loadCommand
+	BRR     @.nextcmd
+	
+@.return:
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S2, FP, PC, DPC}
+	
+@.too_small:
+	BPT
+	NOP.LT
+	ADR     A0, @too_small_msg
+	FCR     @panic
+	
+@.badmagic:
+	BPT
+	NOP.EQ
+	ADR     A0, @badmagic_msg
+	FCR     @panic
+	
+@.badarch:
+	BPT
+	NOP.GT
+	ADR     A0, @badarch_msg
+	FCR     @panic
+
+.segment @ROMDATA
+
+.align 2
+@pegmagic:
+	.db "\xe4PEGASUS"
+
+@pegarch:
+	.db "EAR3"
+
+@too_small_msg:
+	.lestring "PEGASUS file truncated\n"
+
+@badmagic_msg:
+	.lestring "Bad magic in PEGASUS file!\n"
+
+@badarch_msg:
+	.lestring "Bad architecture in PEGASUS file!\n"
+
+.import "memcmp.ear"

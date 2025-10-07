@@ -1,0 +1,83 @@
+.import "constants.ear"
+.import "puts.ear"
+.import "gimli/gimli.ear"
+.import "print_hex.ear"
+
+
+.scope
+.export @main
+@main:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	SUB     SP, $GIMLI_STATE_SIZEOF + $GIMLI_HASH_DEFAULT_LEN
+	MOV     A0, SP
+	FCR     @gimli_hash_init
+	
+	BRR     @.next_char
+	
+	// do {
+@.loop:
+	// gimli_hash_update(&g, &c, 1);
+	MOV     A0, SP
+	PSH     {A5}
+	MOV     A1, SP
+	MOV     A2, 1
+	FCR     @gimli_hash_update
+	POP     {ZERO}
+	
+	// } while((ch = getchar()) != EOF);
+@.next_char:
+	RDB     A5
+	BRR.CC  @.loop
+	
+@.done:
+	// gimli_hash_final(&g, hash, GIMLI_HASH_DEFAULT_LEN);
+	MOV     A0, SP
+	ADD     A1, A0, $GIMLI_STATE_SIZEOF
+	MOV     A2, $GIMLI_HASH_DEFAULT_LEN
+	FCR     @gimli_hash_final
+	
+	// No longer need the state
+	ADD     SP, $GIMLI_STATE_SIZEOF
+	
+	// Now print the hash
+	MOV     A0, SP
+	MOV     A1, $GIMLI_HASH_DEFAULT_LEN
+	FCR     @print_hex
+	WRB     '\n'
+	
+	// All done!
+	MOV     A0, ZERO
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+/*
+@main:
+	ADR     A0, @hello_msg
+	FCR     @puts
+	
+	// Syscall time!
+	FCR     @random
+	BPT
+	
+	// mmap(0x4000, 0x1000, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+	MOV     A0, 0x4000
+	MOV     A1, 0x1000
+	MOV     A2, $PROT_READ | $PROT_WRITE
+	MOV     A3, $MAP_FIXED | $MAP_PRIVATE | $MAP_ANONYMOUS
+	MOV     A4, -1
+	MOV     A5, ZERO
+	FCR     @mmap
+	
+	BPT
+	
+	// Try another exception type
+	STB     [PC], PC
+	
+	// Back again? Infinite loop!
+	BRR     @
+
+@hello_msg:
+	.lestring "Hello from usermode!\n"
+*/

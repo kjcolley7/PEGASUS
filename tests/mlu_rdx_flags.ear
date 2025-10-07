@@ -1,0 +1,33 @@
+.import "test_suite.ear"
+.scope
+@test:
+	// 0xA000 * 0xE000 = 0x8c000000
+	// 16-bit: !ZF, !SF, !PF
+	// 32-bit:  ZF,  SF,  PF
+	
+	// MLU w/o Rdx, check ZF/SF/PF
+	MOV     A0, 0xA000
+	MLU     A0, 0xE000
+	BPT.NZ
+	ORR.NZ  S2, 1 << 0
+	BPT.NG
+	ORR.NG  S2, 1 << 1
+	BPT.OD
+	ORR.OD  S2, 1 << 2
+	
+	MOV     A0, 0xA000
+	MLU     A2:A1, A0, 0xE000
+	BPT.ZR
+	ORR.ZR  S2, 1 << 3
+	BPT.PS
+	ORR.PS  S2, 1 << 4
+	BPT.EV
+	ORR.EV  S2, 1 << 5
+	CMP     A1, ZERO
+	BPT.NE
+	ORR.NE  S2, 1 << 6
+	CMP     A2, 0x8c00
+	BPT.NE
+	ORR.NE  S2, 1 << 7
+	
+	RET

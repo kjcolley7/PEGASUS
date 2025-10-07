@@ -1,4 +1,5 @@
 import ply.lex as lex
+from .isa import CONTROL_REGISTER_NUMBERS
 
 # List of token names
 tokens = (
@@ -10,9 +11,13 @@ tokens = (
 	"ZERO", "A0", "A1", "A2", "A3", "A4", "A5", "S0",
 	"S1", "S2", "FP", "SP", "RA", "RD", "PC", "DPC",
 	
+	# Control register names
+	"CR0", "CR1", "CR2", "CR3", "CR4", "CR5", "CR6", "CR7",
+	"CR8", "CR9", "CR10", "CR11", "CR12", "CR13", "CR14", "CR15",
+	
 	# Real instructions
 	"ADD", "SUB", "MLU", "MLS", "DVU", "DVS", "XOR", "AND",
-	"ORR", "SHL", "SRU", "SRS", "MOV", "CMP",
+	"ORR", "SHL", "SRU", "SRS", "MOV", "CMP", "RDC", "WRC",
 	"LDW", "STW", "LDB", "STB", "BRA", "BRR", "FCA", "FCR",
 	"RDB", "WRB", "PSH", "POP", "INC", "BPT", "HLT", "NOP",
 	
@@ -24,14 +29,15 @@ tokens = (
 	"LBRACE", "RBRACE", "PLUS", "STAR", "COLON",
 	"SLASH", "PERCENT", "CARAT", "AMPERSAND", "PIPE",
 	"LSHIFT", "RSHIFT", "TILDE",
-	"COMMA", "DOT",
+	"COMMA", "DOT", "ASSIGN", "BANG",
+	"EQEQ", "BANGEQ", "LESS", "LESSEQ", "GREATER", "GREATEREQ",
 	
 	# Values
-	"LABEL", "NUMBER", "STRING",
+	"LABEL", "EQUATE", "NUMBER", "STRING",
 	
 	# Assembler directives
 	"DOTLESTRING", "DOTDB", "DOTDW", "DOTLOC", "DOTALIGN",
-	"DOTSEGMENT", "DOTSCOPE", "DOTEXPORT"
+	"DOTSEGMENT", "DOTSCOPE", "DOTEXPORT", "DOTIMPORT", "DOTASSERT",
 )
 
 words = {
@@ -55,15 +61,15 @@ words = {
 	# Register names and their aliases
 	"R0": "ZERO", "ZERO": "ZERO",
 	"R1": "A0", "A0": "A0",
-	"R2": "A1", "RV": "A1", "A1": "A1",
-	"R3": "A2", "RVX": "A2", "A2": "A2",
+	"R2": "A1", "A1": "A1",
+	"R3": "A2", "A2": "A2",
 	"R4": "A3", "A3": "A3",
 	"R5": "A4", "A4": "A4",
 	"R6": "A5", "A5": "A5",
 	"R7": "S0", "S0": "S0",
 	"R8": "S1", "S1": "S1",
 	"R9": "S2", "S2": "S2",
-	"R10": "FP", "S3": "FP", "FP": "FP",
+	"R10": "FP", "FP": "FP",
 	"R11": "SP", "SP": "SP",
 	"R12": "RA", "RA": "RA",
 	"R13": "RD", "RD": "RD",
@@ -85,6 +91,8 @@ words = {
 	"SRS": "SRS",
 	"MOV": "MOV",
 	"CMP": "CMP",
+	"RDC": "RDC",
+	"WRC": "WRC",
 	"LDW": "LDW",
 	"STW": "STW",
 	"LDB": "LDB",
@@ -113,6 +121,10 @@ words = {
 	"SBC": "SBC"
 }
 
+# Add control registers
+for k, v in CONTROL_REGISTER_NUMBERS.items():
+	words[k] = "CR%d" % v
+
 # Syntax
 t_LPAREN = r'\('
 t_RPAREN = r'\)'
@@ -134,6 +146,14 @@ t_RSHIFT = r'>>'
 t_TILDE = r'~'
 t_COMMA = r','
 t_DOT = r'\.'
+t_ASSIGN = r':='
+t_BANG = r'!'
+t_EQEQ = r'=='
+t_BANGEQ = r'!='
+t_LESS = r'<'
+t_LESSEQ = r'<='
+t_GREATER = r'>'
+t_GREATEREQ = r'>='
 
 # Words like register names, condition codes, instructions
 def t_word(t):
@@ -150,16 +170,23 @@ def t_word(t):
 	return t
 
 # Labels all start with an at sign. They may contain alphanumeric
-# characters, underscores, dollar signs, at signs, and dots, but
-# they may not end with a dot or have multiple consecutive dots.
+# characters, underscores, at signs, and dots, but they may not end
+# with a dot.
 def t_LABEL(t):
-	r'\@(\.?[a-zA-Z0-9_$@])*'
-	t.value = t.value[1:]
+	r'\@([a-zA-Z0-9_@\.]*[a-zA-Z0-9_@])?'
+	t.value = t.value
+	return t
+
+# Equates follow the same naming rules as labels, but with dollar
+# signs instead of at signs.
+def t_EQUATE(t):
+	r'\$[a-zA-Z0-9_$\.]*[a-zA-Z0-9_$]'
+	t.value = t.value
 	return t
 
 # Literal numbers
 def t_NUMBER(t):
-	r'''([1-9]\d*|0(x[a-fA-F0-9]+|b[01]+|o[0-7]+)?|'[^']'|'\\[\\'0afvtrn]')'''
+	r'''([1-9]\d*|0(x[a-fA-F0-9]+|b[01]+|o[0-7]+)?|'[^\\']'|'\\[\\'0afvtrn]')'''
 	
 	sign = 1
 	s = t.value
@@ -186,14 +213,42 @@ def t_NUMBER(t):
 
 # String literals
 def t_STRING(t):
-	r'".*?(?<!\\)"'
+	r'"([^\\"]|\\([\\"0afvtrn]|[0-7]{3}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}))*"'
 	
-	# This might be unsafe, not entirely sure, but it doesn't matter
-	# because I'm not expecting to assemble untrusted input. This makes
-	# handling escaped values like \n or \x41 so easy that it's worth it.
-	t.value = eval("b" + t.value)
-	if isinstance(t.value, str):
-		t.value = [ord(x) for x in t.value]
+	l: list[bytes] = []
+	i: int = 0
+	s: str = t.value[1:-1]
+	while i < len(s):
+		c = s[i]
+		i += 1
+		if c != '\\':
+			l.append(c.encode())
+			continue
+		
+		c2 = s[i]
+		i += 1
+		
+		if c2 == 'x':
+			# Hex escape
+			c = bytes.fromhex(s[i:i+2])
+			i += 2
+		elif c2 == 'u':
+			# Unicode escape
+			c = (b"\\u" + s[i:i+4].encode()).decode('unicode_escape')
+			i += 4
+		elif c2 in "01234567":
+			# Octal escape
+			i -= 1
+			c = b"%c" % int(s[i:i+3], 8)
+			i += 3
+		else:
+			# Special character escape
+			idx = "\\\"0afvtrn".index(c2)
+			c = b"\\\"\0\a\f\v\t\r\n"[idx:idx+1]
+		
+		l.append(c)
+	
+	t.value = b"".join(l)
 	return t
 
 # Comments
@@ -211,6 +266,8 @@ t_DOTALIGN = r'\.align'
 t_DOTSEGMENT = r'\.segment'
 t_DOTSCOPE = r'\.scope'
 t_DOTEXPORT = r'\.export'
+t_DOTIMPORT = r'\.import'
+t_DOTASSERT = r'\.assert'
 
 # Define a rule so we can track line numbers
 def t_newline(t):

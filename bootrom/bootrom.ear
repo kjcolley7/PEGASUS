@@ -1,0 +1,246 @@
+// Set up RAM labels early
+.import "kernel_constants.ear"
+.import "ram.ear"
+
+// Define some strings
+.segment @ROMDATA
+@bootmsg:
+	.lestring "EAR BootROM v0\n"
+@mmumsg:
+	.lestring "MMU initialized\n"
+@usermmumsg:
+	.lestring "MMU initialized for usermode\n"
+
+// Begin the BootROM!
+.segment @ROM
+.scope
+.export @boot
+@boot:
+	// Must be located at 0x0000! This is the very first instruction
+	// executed upon reset.
+	.assert @ == 0x0000
+	MOV     A0, @bootmsg
+	FCR     @debug_puts
+	
+	// Mark altctx as in an exception so if the kernel crashes it won't
+	// switch to usermode to handle the exception.
+	MOV     A0, $EXC_DECODE << $EXC_CODE_SHIFT
+	WRC     !EXC_INFO, A0
+	
+	// Configure kernel MMU
+	FCR     @mmu_init
+	MOV     A0, @mmumsg
+	FCR     @debug_puts
+	
+	// Initialize stack and sentinel frame pointer
+	MOV     SP, @stack_end
+	DEC     FP, SP, 2
+	PSH     {FP}
+	
+	// Configure user MMU
+	FCR     @mmu_userinit
+	MOV     A0, @usermmumsg
+	FCR     @debug_puts
+	
+	// Prevent user from writing to any control registers
+	MOV     A1, 0xFFFF
+	WRC     !CREG_DENY_W, A1
+	
+	// User may only read from these control registers:
+	// - CREG_DENY_R/W
+	// - CREG_DENY_INSN_0/1
+	// - INSN_COUNT_LO/HI
+	// - FLAGS
+	MOV     A1, 0x7FC0
+	WRC     !CREG_DENY_R, A1
+	
+	// Prevent user from accessing kernel's thread context
+	RDC     A1, !FLAGS
+	ORR     A1, $FLAG_DENY_XREGS
+	WRC     !FLAGS, A1
+	
+	// Deny user from executing the `HLT` instruction
+	MOV     A0, 1 << ($OP_HLT - 16)
+	WRC     !INSN_DENY_0, ZERO
+	WRC     !INSN_DENY_1, A0
+	
+	// Map a read-only view of the user program
+	// into the kernel's address space
+@map_user_program:
+	MOV     A0, @ttbr
+	MOV     A1, @remote_view >> $PAGE_SHIFT
+	MOV     A2, $PROG_PAGE
+	MOV     A3, $REMOTE_VIEW_SIZE >> $PAGE_SHIFT
+	FCR     @map_pages
+	
+	// Load user program
+.segment @ROMDATA
+@load_peg_msg:
+	.lestring "Loading user program\n"
+.segment @ROM
+	MOV     A0, @load_peg_msg
+	FCR     @debug_puts
+	MOV     A0, @remote_view
+	MOV     A1, $REMOTE_VIEW_SIZE
+	FCR     @Pegasus_load
+	
+.segment @ROMDATA
+@user_start_msg:
+	.lestring "Starting user program\n"
+.segment @ROM
+	MOV     A0, @user_start_msg
+	FCR     @debug_puts
+	BRR     @context_switch
+	
+// Ensure we are unaligned. Between here and the jump
+// table are (4+4 + 3 + 1 + 3 + 5 + 3) = 25 bytes, and the jump
+// table must be 2-byte aligned.
+	NOP
+.align 2
+.loc @ - 1
+	
+.export @return_from_syscall
+@return_from_syscall:
+	// Return from syscall
+	MOV     !PC, !RA        //4 bytes
+	MOV     !DPC, !RD       //4 bytes
+	
+.export @context_switch
+@context_switch:
+	// Clear user exception
+	WRC     !EXC_INFO, ZERO //3 bytes
+	
+	// Swap to usermode!
+	HLT                     //1 byte
+	
+	// Fallthrough into @handle_exception
+	
+.export @handle_exception
+@handle_exception:
+	// Back from usermode!
+	RDC     S1, !EXC_INFO   //3 bytes
+	
+	// switch(exc_code)
+	AND     A0, S1, 0b1110  //5 bytes
+	
+	// PC will hold the address of @.exception_handlers
+	LDW     PC, [PC + A0]   //3 bytes
+
+// Must be 2-byte aligned but also come direclty after
+// the instruction just above!
+.assert @ & 1 == 0
+@.exception_handlers:
+	.dw @exc_unaligned_handler
+	.dw @exc_mmu_handler
+	.dw @exc_bus_handler
+	.dw @exc_decode_handler
+	.dw @exc_arithmetic_handler
+	.dw @exc_denied_creg_handler
+	.dw @exc_denied_insn_handler
+	.dw @exc_timer_handler
+
+// S1 = EXC_INFO
+
+.scope
+.export @exc_unaligned_handler
+@exc_unaligned_handler:
+	MOV     A0, @exc_unaligned_msg
+	FCR     @panic
+
+.scope
+.export @exc_bus_handler
+@exc_bus_handler:
+	MOV     A0, @exc_bus_msg
+	FCR     @panic
+
+.scope
+.export @exc_decode_handler
+@exc_decode_handler:
+	MOV     A0, @exc_decode_msg
+	FCR     @panic
+
+.scope
+.export @exc_arithmetic_handler
+@exc_arithmetic_handler:
+	MOV     A0, @exc_arithmetic_msg
+	FCR     @panic
+
+.scope
+.export @exc_denied_creg_handler
+@exc_denied_creg_handler:
+	MOV     A0, @exc_denied_creg_msg
+	FCR     @panic
+
+.scope
+.export @exc_denied_insn_handler
+@exc_denied_insn_handler:
+	MOV     A0, @exc_denied_insn_msg
+	FCR     @panic
+
+.scope
+.export @exc_timer_handler
+@exc_timer_handler:
+	MOV     A0, @exc_timer_msg
+	FCR     @panic
+
+.scope
+.export @panic
+@panic:
+	// Save thread state so it's visible in the debugger
+	// TODO: Disable MMU and use emergency stack? Ensure A0 is readable?
+	PSH     {A0-A5, RA, RD}
+	MOV     A0, @panic_prefix
+	MOV     A1, ZERO
+	FCR     @fputs
+	LDW     A0, [SP]
+	MOV     A1, ZERO
+	FCR     @fputs
+	POP     {A0-A5, RA, RD}
+	
+	BPT
+	
+	// Ensure other thread state is in an exception state (not HLT)
+	PSH     {A0}
+	RDC     A0, !EXC_INFO
+	AND     ZERO, A0, 1
+	MOVN    A0, 0xFFFF
+	WRC.ZR  !EXC_INFO, A0
+	
+	// Trigger a double fault by denying all instructions
+	WRC     INSN_DENY_1, A0
+	WRC     INSN_DENY_0, A0
+	
+	// Infinite loop as a last resort
+.export @___kernel_panic_halt___
+@___kernel_panic_halt___:
+	BRR     @
+	
+	// Illegal instruction, will intentionally cause a decode error
+	// so the debugger stops disassembling at this point.
+	.db 0xCC
+
+
+.segment @ROMDATA
+
+@panic_prefix:
+	.lestring "PANIC! "
+
+@exc_unaligned_msg:
+	.lestring "Unaligned memory access\n"
+@exc_bus_msg:
+	.lestring "Bus error\n"
+@exc_decode_msg:
+	.lestring "Illegal instruction\n"
+@exc_arithmetic_msg:
+	.lestring "Arithmetic error\n"
+@exc_denied_creg_msg:
+	.lestring "Attempted to access a denied control register\n"
+@exc_denied_insn_msg:
+	.lestring "Attempted to execute a denied instruction\n"
+@exc_timer_msg:
+	.lestring "Timer expired\n"
+
+.import "debug_puts.ear"
+.import "fputs.ear"
+.import "mmu.ear"
+.import "pegasus.ear"

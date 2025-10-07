@@ -6,24 +6,28 @@ Custom CPU architecture and binary file format, initially created for SunshineCT
 
 ## Useful Documentation
 
-* [EAR Extended Architecture Reference](docs/EAR_EAR_v2.md)
+* [EAR Extended Architecture Reference](docs/EAR_EAR_v3.md)
+* [EAR Assembler Manual](docs/EARASM.md)
 * [PEGASUS File Format Reference](docs/PEGASUS.md)
 
 
 ## Project Structure
 
-* [challenges](challenges): Source code for the various CTF challenges that have been built on top of the PEGASUS platform.
-* [client](client): Command line program to upload a PEGASUS file to a server and print the result. Product: `submitpeg`
-* [common](common): Defines macros and other common support functionality used by multiple subprojects.
-* [docs](docs): Contains Markdown-formatted documentation for the EAR architecture and PEGASUS file format.
-* [earasm](earasm): EAR assembler and PEGASUS linker.
-* [kjc_argparse](kjc_argparse): Command line argument parsing library.
-* [mkexeloadable](mkexeloadable): Tool used to patch Linux executables to make them loadable using `dlopen()` on newer versions of Ubuntu.
-* [pegasus_ear](pegasus_ear): Core EAR emulator, debugger, and PEGASUS loader. Product: `libpegasus_ear.so`
-* [runear](runear): Simplified command line program for running a raw binary file as EAR code. Product: `runear`
+* [docs](docs): Contains Markdown-formatted documentation
+* [libear](libear): Core EAR emulator. Product: `libear.so`
+* [libeardbg](libeardbg): EAR debugger core and REPL. Product: `libeardbg.so`
 * [runpeg](runpeg): Command line program for running a PEGASUS file with a variety of options. Product: `runpeg`
-* [server](server): Library for receiving a PEGASUS file from a client, saving it, and running it. Product: `libpegasus_server.so`
-* [tests](tests): Contains a `pytest` suite for testing the assembler, and assorted assembly files for testing the loader/emulator.
+* [earasm](earasm): EAR assembler and PEGASUS linker
+* [vscode-extension](vscode-extension): VSCode extension adding syntax highlighting to EAR assembly files (`*.ear`)
+* [bootrom](bootrom): Source code of the EAR CPU's bootrom. Product: `boot.rom`
+* [challenges](challenges): Source code for the various CTF challenges that have been built on top of the PEGASUS platform
+* [client](client.disabled): Command line program to upload a PEGASUS file to a server and print the result. Product: `submitpeg`
+* [server](server.disabled): Library for receiving a PEGASUS file from a client, saving it, and running it. Product: `libpegasus_server.so`
+* [pegsession](pegsession): Infrastructure for hosting challenges with both the debugger and challenge I/O accessible on different ports
+* [common](common): Defines macros and other common support functionality used by multiple subprojects
+* [libraries](libraries): Contains library submodules and the build definitions for them
+* [mkexeloadable](mkexeloadable): Tool used to patch Linux executables to make them loadable using `dlopen()` on newer versions of Ubuntu
+* [tests](tests): Contains a `pytest` suite for testing the assembler, and assorted assembly files for testing the loader/emulator
 
 
 ## Building & Deploying

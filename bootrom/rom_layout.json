@@ -1,0 +1,26 @@
+{
+	"default": "@ROM",
+	"segments": [
+		{
+			"name": "@PEG",
+			"prot": "",
+			"emit": false,
+			"header": true
+		},
+		{
+			"name": "@ROM",
+			"prot": "rx",
+			"vmaddr": "0x0000"
+		},
+		{
+			"name": "@ROMDATA",
+			"prot": "r"
+		},
+		{
+			"name": "@RAM",
+			"prot": "rwx",
+			"vmaddr": "0x0000",
+			"emit": false
+		}
+	]
+}

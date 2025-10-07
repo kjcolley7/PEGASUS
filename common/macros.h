@@ -15,9 +15,9 @@
 #include <errno.h>
 
 #ifndef UNIQUIFY
-#define UNIQUIFY(macro, args...) UNIQUIFY_(macro, __COUNTER__, ##args)
-#define UNIQUIFY_(macro, id, args...) UNIQUIFY__(macro, id, ##args)
-#define UNIQUIFY__(macro, id, args...) macro(id, ##args)
+#define UNIQUIFY(macro, ...) UNIQUIFY_(macro, __COUNTER__, ##__VA_ARGS__)
+#define UNIQUIFY_(macro, id, ...) UNIQUIFY__(macro, id, ##__VA_ARGS__)
+#define UNIQUIFY__(macro, id, ...) macro(id, ##__VA_ARGS__)
 #endif
 
 #define STRINGIFY(arg) STRINGIFY_(arg)
@@ -43,6 +43,7 @@
 #define MAX(a, b) CMP(>, a, b)
 
 #define ARRAY_COUNT(arr) (sizeof(arr) / sizeof(arr[0]))
+#define BITCOUNT(x) (sizeof(x) * 8)
 
 /*! Frees the pointer pointed to by the parameter and then sets it to NULL */
 #define destroy(pptr) do { \

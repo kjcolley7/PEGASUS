@@ -1,0 +1,54 @@
+.import "kernel_constants.ear"
+
+.segment @RAM
+
+.loc $REGION_SIZE - 6 * $TTB_SIZE
+@page_tables:
+@ttbru:
+.loc @ + $TTB_SIZE
+@ttbru_end:
+
+@ttbwu:
+.loc @ + $TTB_SIZE
+@ttbwu_end:
+
+@ttbxu:
+.loc @ + $TTB_SIZE
+@ttbxu_end:
+
+@ttbr:
+.loc @ + $TTB_SIZE
+@ttbr_end:
+
+@ttbw:
+.loc @ + $TTB_SIZE
+@ttbw_end:
+
+@ttbx:
+.loc @ + $TTB_SIZE
+@ttbx_end:
+
+// 512 bytes for kernel stack seems reasonable
+$STACK_SIZE := 0x200
+
+.loc @page_tables - $STACK_SIZE
+@stack:
+.loc @ + $STACK_SIZE
+@stack_end:
+
+// Back to the beginning of RAM!
+.loc 0
+@user_ram:
+.loc @ + $USER_RAM_SIZE
+@user_ram_end:
+
+.assert @ & ($PAGE_SIZE - 1) == 0
+@remote_view:
+.loc @ + $REMOTE_VIEW_SIZE
+@remote_view_end:
+
+// One bit per page
+.assert @ & 1 == 0
+@user_ram_used_bitmap:
+.loc @ + $USER_RAM_BITMAP_SIZE
+@user_ram_used_bitmap_end:

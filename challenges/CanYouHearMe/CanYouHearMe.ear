@@ -1,0 +1,30 @@
+.import "puts.ear"
+
+
+.export @main
+@main:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	ADR     A0, @hello_str
+	FCR     @puts
+	
+	ADR     A0, @flag
+	FCR     @puts
+	
+	WRB     '\n'
+	
+	// Exit with code 0
+	MOV     A0, ZERO
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+
+.segment @CONST
+@hello_str:
+	.lestring
+		"RAD-EAR-3 CPU initialized, running at 10MHz\n" +
+		"\n" +
+		"Board serial number: "
+
+.import "challenges/CanYouHearMe/flag.ear"

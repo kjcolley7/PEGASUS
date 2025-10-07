@@ -11,10 +11,10 @@ endif
 #####
 define _solve_rule
 
-$1+PEG_FILES := $$(patsubst %.ear,%.peg,$$(wildcard $(PEG_CHALS_DIR)/$1/*.ear))
+$1+PEG_FILES := $$(patsubst %.ear,%.peg,$$(wildcard $$(PEG_CHALS_DIR)/$1/*.ear))
 
-ifdef $(PEG_CHALS_DIR)/$1+DOCKER_PORTS
-$1+PORT_ARG := PORT="$$($(PEG_CHALS_DIR)/$1+DOCKER_PORTS)"
+ifdef $$(PEG_CHALS_DIR)/$1+DOCKER_PORTS
+$1+PORT_ARG := PORT="$$($$(PEG_CHALS_DIR)/$1+DOCKER_PORTS)"
 else
 $1+PORT_ARG :=
 endif
@@ -27,9 +27,9 @@ solve: solve[$1]
 
 .PHONY: clean[$1]
 clean[$1]:
-	$(_v)rm -f $$($1+PEG_FILES)
+	$$(_v)rm -f $$($1+PEG_FILES)
 
-clean:: clean[$1]
+peg-challenges-clean: clean[$1]
 
 endef #_solve_rule
 solve_rule = $(eval $(call _solve_rule,$1))

@@ -1,0 +1,45 @@
+.import "test_suite.ear"
+
+.scope
+@test:
+	// MLU A1, A2, 0x1234 shouldn't modify A2
+	MOV     A2, 0xAAAA
+	MLU     A1, A2, 0x1234
+	CMP     A1, 0x9e88 // 0xAAAA * 0x1234 = 0xC229E88
+	BPT.NE
+	ORR.NE  S2, 1 << 0
+	CMP     A2, 0xAAAA
+	BPT.NE
+	ORR.NE  S2, 1 << 1
+	
+	// MLU A3:A1, A2, 0x1234 should modify A2 w/ the high 16 bits
+	MOV     A3, ZERO
+	MOV     A2, 0xAAAA
+	MLU     A3:A1, A2, 0x1234
+	CMP     A1, 0x9e88 // 0xAAAA * 0x1234 = 0xC229E88
+	BPT.NE
+	ORR.NE  S2, 1 << 2
+	CMP     A3, 0xc22 // high 16 bits
+	BPT.NE
+	ORR.NE  S2, 1 << 3
+	
+	// DVU works as expected
+	MOV     A2, 0x1234
+	DVU     A1:A2, A2, 0x10
+	CMP     A1, 0x4
+	BPT.NE
+	ORR.NE  S2, 1 << 4
+	DVU     A1:A2, A2, 0x10
+	CMP     A1, 0x3
+	BPT.NE
+	ORR.NE  S2, 1 << 5
+	DVU     A1:A2, A2, 0x10
+	CMP     A1, 0x2
+	BPT.NE
+	ORR.NE  S2, 1 << 6
+	DVU     A1:A2, A2, 0x10
+	CMP     A1, 0x1
+	BPT.NE
+	ORR.NE  S2, 1 << 7
+	
+	RET

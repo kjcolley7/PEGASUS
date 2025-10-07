@@ -1,0 +1,24 @@
+/*
+copy_page(A0: dst_page, A1: src_page)
+*/
+.scope
+.export @copy_page
+@copy_page:
+	$.FPOFF := 6 //S0-S2
+	PSH     {S0-S2, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	MOV     A2, 16
+	SUB     A0, A2
+	MOV     SP, A1
+	
+@.next16:
+	POP     {A3-A5, S0-S2, RA, RD}
+	ADD     A0, 32
+	PSH     A0, {A3-A5, S0-S2, RA, RD}
+	DEC     A2
+	BRR.NZ  @.next16
+	
+	.assert $.FPOFF == 6 //S0-S2
+	DEC     SP, FP, $.FPOFF
+	POP     {S0-S2, FP, PC, DPC}

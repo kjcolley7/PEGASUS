@@ -1,0 +1,515 @@
+.import "constants.ear"
+.import "ram.ear"
+.import "copy_page.ear"
+.import "fill16.ear"
+.import "syscall_numbers.ear"
+.import "sys/all.ear"
+
+
+/*
+void map_pages(
+	EAR_PTE* ttb: A0,
+	uint8_t vpage: A1,
+	uint16_t ppage: A2,
+	uint8_t count: A3
+);
+*/
+.scope
+.export @map_pages
+@map_pages:
+	SHL     A1, 1       //multiply by $PTE_SIZE
+	ADD     A0, A1      //start PTE
+	SHL     A3, 1       //multiply by $PTE_SIZE
+	ADD     A1, A0, A3  //end PTE
+	
+@.next_page:
+	STW     [A0], A2
+	INC     A0, $PTE_SIZE
+	INC     A2
+	CMP     A0, A1
+	BRR.NE  @.next_page
+	
+	RET
+
+
+.scope
+.export @alloc_user_page
+/*
+Parameters:
+A0: uword hint - starting point for linear search
+
+Returns: uword ppage - physical page number of allocated page, also
+                       usable as a hint for next allocation.
+
+Locals:
+A0: uword start_idx / uword* bitmap_ptr
+A1: uword cur_idx
+A2: uword bitmap_word
+A3: uword bitmap_bit
+S0: uword bit_idx / uword page_idx
+*/
+$.FPOFF := 2 //S0
+@alloc_user_page:
+	PSH     {S0, FP, RA, RD}
+	INC     FP, SP, $.FPOFF
+	
+	// Convert from physical page number of user RAM page to
+	// byte index within bitmap
+	SUB     A0, $RAM_PAGE | (@user_ram >> $PAGE_SHIFT)
+	SRU     A0, 3
+	AND     A0, ($USER_RAM_BITMAP_SIZE - 1) & ~1
+	MOV     A1, A0
+	
+@.search_free_page:
+	LDW     A2, [A1 + @user_ram_used_bitmap]
+	BRR.NZ  @.found_page
+	INC     A1, 2
+	AND     A1, $USER_RAM_BITMAP_SIZE - 1
+	CMP     A1, A0
+	BRR.NE  @.search_free_page
+	
+	// No free pages available
+	MOV     A0, $PTE_FAULT
+	RET
+	
+@.found_page:
+	// Shift out bits until a one bit is found
+	MOV     S0, ZERO
+	MOV     A3, 1
+@.next_bit:
+	AND     ZERO, A2, A3
+	INCN.ZR S0
+	SHLN.ZR A3, 1
+	BRR.ZR  @.next_bit
+	
+	// Mark this page as used
+	XOR     A2, A3
+	ADD     A3, A1, @user_ram_used_bitmap
+	STW     [A3], A2
+	
+	// Convert from bitmap index to page index
+	SHL     A1, 3
+	ORR     A0, S0, A1
+	
+	// Return physical page number
+	ADD     A0, $RAM_PAGE | (@user_ram >> $PAGE_SHIFT)
+	
+	.assert $.FPOFF == 2 //S0
+	DEC     FP, SP, $.FPOFF
+	POP     {S0, FP, PC, DPC}
+
+
+/*
+zero_user_page(A0: uword ppage)
+*/
+.scope
+.export @zero_user_page
+@zero_user_page:
+	PSH     {FP, RA, RD}
+	MOV     FP, SP
+	
+	// Map write view of this page
+	MOV     A1, @ttbw + (@remote_view >> $PAGE_SHIFT) * $PTE_SIZE
+	STW     [A1], A0
+	
+	// Zero-initialize the page
+	MOV     A0, @remote_view
+	MOV     A1, ZERO
+	MOV     A2, $PAGE_SIZE
+	FCR     @fill16
+	
+	MOV     SP, FP
+	POP     {FP, PC, DPC}
+
+
+.scope
+.export @ttb_simple_region
+@.while_body:
+	STW     [A1], A0
+	INC     A0
+	INC     A1, $PTE_SIZE
+	
+@ttb_simple_region:
+@.while_cond:
+	CMP     A1, A2
+	BRR.NE  @.while_body
+	
+	RET
+
+
+.scope
+.export @mmu_init
+@mmu_init:
+	// Make memory reads and writes go to RAM instead of ROM
+	MOV     A0, $RAM_PAGE
+	WRC     MEMBASE_R, A0
+	WRC     MEMBASE_W, A0
+	
+	// This is normally a callee-saved register, so this function
+	// has a non-standard calling convention!
+	MOV     S0, RA
+	
+	MOV     A0, $RAM_PAGE
+	MOV     A1, @ttbr
+	MOV     A2, @ttbr_end
+	FCR     @ttb_simple_region
+	
+	MOV     A0, $RAM_PAGE
+	MOV     A1, @ttbw
+	MOV     A2, @ttbw_end
+	FCR     @ttb_simple_region
+	
+	// Unmap remote view PTEs
+	MOV     A0, @ttbr + (@remote_view >> $PAGE_SHIFT) * $PTE_SIZE
+	MOV     A1, $PTE_FAULT
+	MOV     A2, ($REMOTE_VIEW_SIZE >> $PAGE_SHIFT) * $PTE_SIZE
+	FCR     @fill16
+	
+	MOV     A0, @ttbw + (@remote_view >> $PAGE_SHIFT) * $PTE_SIZE
+	MOV     A1, $PTE_FAULT
+	MOV     A2, ($REMOTE_VIEW_SIZE >> $PAGE_SHIFT) * $PTE_SIZE
+	FCR     @fill16
+	
+	// Fill execute TTB with invalid entries
+	MOV     A0, @ttbx
+	MOV     A1, $PTE_FAULT
+	MOV     A2, $TTB_SIZE
+	FCR     @fill16
+	
+	// Disable writing to bootrom region
+	MOV     A0, @ttbw
+	MOV     A1, $PTE_FAULT
+	MOV     A2, ($BOOTROM_CODE_PAGES + $BOOTROM_DATA_PAGES) * $PTE_SIZE
+	FCR     @fill16
+	
+	// Map bootrom code pages as RX
+	MOV     A0, @ttbr
+	MOV     A1, @ttbx
+	MOV     A2, ZERO
+	
+@.map_bootrom_code_loop:
+	STW     [A0], A2
+	STW     [A1], A2
+	INC     A0, $PTE_SIZE
+	INC     A1, $PTE_SIZE
+	INC     A2
+	CMP     A2, $BOOTROM_CODE_PAGES
+	BRR.LT  @.map_bootrom_code_loop
+
+@.map_bootrom_data_loop:
+	STW     [A0], A2
+	INC     A0, $PTE_SIZE
+	INC     A2
+	CMP     A2, $BOOTROM_CODE_PAGES + $BOOTROM_DATA_PAGES
+	BRR.LT  @.map_bootrom_data_loop
+	
+@.done_filling_ttbx:
+	// Enable MMU for data reads
+	MOV     A0, $RAM_PAGE | $MMU_ENABLED | (@ttbr >> 8)
+	WRC     MEMBASE_R, A0
+	
+	// Enable MMU for data writes
+	MOV     A0, $RAM_PAGE | $MMU_ENABLED | (@ttbw >> 8)
+	WRC     MEMBASE_W, A0
+	
+	// Enable MMU for code
+	MOV     A0, $RAM_PAGE | $MMU_ENABLED | (@ttbx >> 8)
+	WRC     MEMBASE_X, A0
+	
+	// Return, but the return address lives in S0
+	BRA     S0
+
+
+.scope
+.export @mmu_userinit
+@mmu_userinit:
+	PSH     {RA, RD}
+	
+	// Mark all user RAM pages as free
+	MOV     A0, @user_ram_used_bitmap_end
+	MOV     A1, 0xFFFF
+	MOV     A2, A1
+	.assert $USER_RAM_BITMAP_SIZE == 0x10
+	PSH     A0, {A1-A2}  //C-F
+	PSH     A0, {A1-A2}  //8-B
+	PSH     A0, {A1-A2}  //4-7
+	PSH     A0, {A1-A2}  //0-3
+	
+	// Fill user's TTBs with invalid entries
+	MOV     A0, @ttbru
+	MOV     A1, $PTE_FAULT
+	MOV     A2, $TTB_SIZE
+	FCR     @fill16
+	
+	MOV     A0, @ttbwu
+	MOV     A1, $PTE_FAULT
+	MOV     A2, $TTB_SIZE
+	FCR     @fill16
+	
+	MOV     A0, @ttbxu
+	MOV     A1, $PTE_FAULT
+	MOV     A2, $TTB_SIZE
+	FCR     @fill16
+	
+	// Enable user MMU
+	MOV     A0, $RAM_PAGE | $MMU_ENABLED | (@ttbru >> 8)
+	WRC     !MEMBASE_R, A0
+	MOV     A0, $RAM_PAGE | $MMU_ENABLED | (@ttbwu >> 8)
+	WRC     !MEMBASE_W, A0
+	MOV     A0, $RAM_PAGE | $MMU_ENABLED | (@ttbxu >> 8)
+	WRC     !MEMBASE_X, A0
+	
+	POP     {PC, DPC}
+
+
+// Ensure syscall handler is aligned correctly for the
+// jump table!
+// 3 + 5+4+3 + 3+4+3 + 4+4+3 + 3+3 = 42
+// So @exc_mmu_handler must start aligned
+NOP
+NOP
+.align 2
+.loc @ - 2
+
+.scope
+.export @exc_mmu_handler
+/*
+S1: EXC_INFO - exception code and info
+S2: EXC_ADDR - virtual address of fault
+*/
+@exc_mmu_handler:
+	// Get faulting address
+	RDC     S2, !EXC_ADDR                      //3
+	
+	// Check if the fault occurred in the syscall page
+	AND     A0, S2, 0xFF << $PAGE_SHIFT        //5
+	CMP     A0, $SYSCALL_PAGE                  //4
+	BRR.NE  @.not_syscall                      //3
+	
+	// Check if this was an execute fault
+	SRU     S1, $EXC_FAULT_PROT_SHIFT          //3
+	CMP     S1, $EXC_FAULT_PROT_EXECUTE        //4
+	BRR.NE  @.not_syscall                      //3
+	
+	// Check that the syscall number is valid
+	AND     S2, $PAGE_SIZE - 1                 //4
+	CMP     S2, $SYSCALL_COUNT                 //4
+	BRR.GE  @.not_syscall                      //3
+	
+	// Dispatch syscall
+	SHL     S2, 1                              //3
+	LDW     PC, [PC + S2]                      //3
+	
+.assert @ & 1 == 0
+.export @syscall_table
+@syscall_table:
+	.dw @sys_exit
+	.dw @sys_random
+	.dw @sys_mmap
+	.dw @sys_munmap
+
+.assert @ - @syscall_table == $SYSCALL_COUNT * 2
+
+/*
+Embedded "function":
+A0: MEMBASE_* value
+A1: PTE offset of TTB
+
+Clobbers: A2
+*/
+@.map_user_ttb:
+	// Turn off MMU_ENABLED bit to leave the TTB base
+	.assert $MMU_ENABLED == 0x01
+	SRU     A0, 1
+	BRR.ZR  @.panic_mmu
+	SHL     A0, 1
+	
+	// Map read-write view of this TTB
+	ADD     A2, A1, @ttbw
+	ADD     A1, @ttbr
+	STW     [A1], A0
+	STW     [A2], A0
+	INC     A1, 2
+	INC     A2, 2
+	INC     A0
+	STW     [A1], A0
+	STW     [A2], A0
+	
+	RET
+
+@.not_syscall:
+	// Map user's TTBs as ttbru, ttbwu, ttbxu (RW)
+	RDC     A0, !MEMBASE_R
+	MOV     A1, @ttbru >> ($PAGE_SHIFT - 1)
+	FCR     @.map_user_ttb
+	RDC     A0, !MEMBASE_W
+	MOV     A1, @ttbwu >> ($PAGE_SHIFT - 1)
+	FCR     @.map_user_ttb
+	RDC     A0, !MEMBASE_X
+	MOV     A1, @ttbxu >> ($PAGE_SHIFT - 1)
+	FCR     @.map_user_ttb
+	
+	// Get PTE offset for faulting address
+	SRU     S0, S2, $PAGE_SHIFT
+	SHL     S0, 1
+	
+	// Find TTB for access
+	SRU     A0, S1, $EXC_FAULT_PROT_SHIFT
+	AND     A0, 0x3
+	BRR.ZR  @.panic_mmu
+	
+	// S1 is now the PTE address for the faulting address
+	
+	CMP     A0, $EXC_FAULT_PROT_READ
+	ADDN.EQ S1, S0, @ttbru
+	BRR.EQ  @.got_pte
+	
+	CMP     A0, $EXC_FAULT_PROT_WRITE
+	ADDN.EQ S1, S0, @ttbwu
+	BRR.EQ  @.got_pte
+	
+	CMP     A0, $EXC_FAULT_PROT_EXECUTE
+	BRR.NE  @.panic_mmu
+	
+	ADD     S1, S0, @ttbxu
+	
+@.got_pte:
+	// Look up PTE in TTB
+	LDW     A0, [S1]
+	
+	// PTE is FFFx (special PTE)?
+	.assert $PTE_FAULT >> 4 == 0xFFF
+	SRS     A1, A0, 4
+	INC     A1
+	BRR.NZ  @.panic_mmu
+	
+	// Extract low nybble, which is special PTE kind
+	AND     A0, 0xF
+	SHL     A0, 1
+	
+	// Alignment hack
+	NOP
+	.align 2
+	.loc @ - 1
+	LDW     PC, [PC + A0]  // 3 bytes
+	
+.assert @ & 1 == 0
+@.mmu_handlers:
+	/*FFF0*/ .dw @.mmu_zero_handler
+	/*FFF1*/ .dw @.panic_mmu
+	/*FFF2*/ .dw @.panic_mmu
+	/*FFF3*/ .dw @.panic_mmu
+	/*FFF4*/ .dw @.panic_mmu
+	/*FFF5*/ .dw @.panic_mmu
+	/*FFF6*/ .dw @.panic_mmu
+	/*FFF7*/ .dw @.panic_mmu
+	/*FFF8*/ .dw @.panic_mmu
+	/*FFF9*/ .dw @.panic_mmu
+	/*FFFA*/ .dw @.panic_mmu
+	/*FFFB*/ .dw @.panic_mmu
+	/*FFFC*/ .dw @.panic_mmu
+	/*FFFD*/ .dw @.panic_mmu
+	/*FFFE*/ .dw @.mmu_cow_handler
+	/*FFFF*/ .dw @.panic_mmu
+	
+@.mmu_zero_handler:
+	MOV     A0, ZERO
+	FCR     @alloc_user_page
+	
+	CMP     A0, $PTE_FAULT
+	BRR.EQ  @.panic_oom
+	
+	MOV     S2, A0
+	FCR     @zero_user_page
+	
+	// Replace each prot's PTE from $PTE_ZERO to the new page number
+	
+	// Fill in read PTE
+	ADD     A1, S0, @ttbru
+	LDW     A2, [A1]
+	CMP     A2, $PTE_ZERO
+	STW.EQ  [A1], S2
+	
+	// Fill in write PTE
+	ADD     A1, S0, @ttbwu
+	LDW     A2, [A1]
+	CMP     A2, $PTE_ZERO
+	STW.EQ  [A1], S2
+	
+	// Fill in execute PTE
+	ADD     A1, S0, @ttbxu
+	LDW     A2, [A1]
+	CMP     A2, $PTE_ZERO
+	STW.EQ  [A1], S2
+	
+	// Make the user resume the faulting instruction. This is especially
+	// important for PSH/POP instructions so they don't get out of sync w/ SP.
+	RDC     A0, !FLAGS
+	ORR     A0, $FLAG_RESUME
+	WRC     !FLAGS, A0
+	BRR     @context_switch
+	
+@.mmu_cow_handler:
+	MOV     A0, ZERO
+	FCR     @alloc_user_page
+	
+	CMP     A0, $PTE_FAULT
+	BRR.EQ  @.panic_oom
+	
+	// Find underlying page
+	LDW     A1, [S0 + @ttbru]
+	
+	// PTE is FFFx (special PTE)?
+	.assert $PTE_FAULT >> 4 == 0xFFF
+	SRS     A2, A1, 4
+	INC     A2
+	BRR.ZR  @.panic_mmu
+	
+	// Map views of both pages to copy between them
+	.assert $REMOTE_VIEW_SIZE >= 2 * $PAGE_SIZE
+	STW     [@ttbw + (@remote_view >> $PAGE_SHIFT) * $PTE_SIZE], A0
+	STW     [@ttbr + ((@remote_view >> $PAGE_SHIFT) + 1) * $PTE_SIZE], A1
+	
+	// Copy the page contents
+	MOV     S2, A0
+	MOV     S1, A1
+	
+	MOV     A0, @remote_view
+	MOV     A1, @remote_view + $PAGE_SIZE
+	FCR     @copy_page
+	
+	// Replace each prot's PTE from $PTE_COW (or the underlying page)
+	// to the new page number
+	
+	// Fill in read & write PTEs
+	STW     [S0 + @ttbru], S2
+	STW     [S0 + @ttbwu], S2
+	
+	// Fill in execute PTE (maybe)
+	LDW     A2, [S0 + @ttbxu]
+	CMP     A2, S1
+	STW.EQ  [S0 + @ttbxu], S2
+	
+	// Make the user resume the faulting instruction. This is especially
+	// important for PSH/POP instructions so they don't get out of sync w/ SP.
+	RDC     A0, !FLAGS
+	ORR     A0, $FLAG_RESUME
+	WRC     !FLAGS, A0
+	BRR     @context_switch
+	
+@.panic_mmu:
+	// Not a syscall, so just panic
+	MOV     A0, @exc_mmu_msg
+	FCR     @panic
+	
+@.panic_oom:
+	MOV     A0, @oom_msg
+	FCR     @panic
+
+.segment @ROMDATA
+@exc_mmu_msg:
+	.lestring "Segmentation fault\n"
+@oom_msg:
+	.lestring "No free pages to use for fault\n"
+@pte_cow_msg:
+	.lestring "Copy-on-write fault: not implemented\n"

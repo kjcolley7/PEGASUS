@@ -1,0 +1,20 @@
+/*
+fill16(
+	uint16_t* ptr: A0,
+	uint16_t c: A1,
+	uint16_t size: A2
+)
+*/
+.scope
+.export @fill16
+@fill16:
+	// Make A2 be the end pointer
+	ADD     A2, A0
+
+@.next_word:
+	STW     [A0], A1
+	INC     A0, 2
+	CMP     A0, A2
+	BRR.NE  @.next_word
+	
+	RET

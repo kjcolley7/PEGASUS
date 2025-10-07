@@ -1,0 +1,21 @@
+.import "test_suite.ear"
+.scope
+@test:
+	ADR     A0, @cow_data
+	LDW     A1, [A0]
+	CMP     A1, 0x1234
+	BPT.NE
+	ORR.NE  S2, 1 << 0
+	
+	MOV     A1, 0xABCD
+	STW     [A0], A1
+	LDW     A2, [A0]
+	CMP     A2, 0xABCD
+	BPT.NE
+	ORR.NE  S2, 1 << 1
+	
+	RET
+
+.segment @DATA
+@cow_data:
+	.dw 0x1234

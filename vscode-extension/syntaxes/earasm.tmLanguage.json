@@ -1,0 +1,186 @@
+{
+	"name": "EarASM",
+	"scopeName": "source.earasm",
+	"patterns": [
+		{
+			"name": "keyword.control.directive.asm.earasm",
+			"match": "\\.(loc|align|segment|scope|export|import)\\b"
+		},
+		{
+			"name": "keyword.other.unit.data.asm.earasm",
+			"match": "\\.(db|dw|lestring)\\b"
+		},
+		{
+			"begin": "\\.assert",
+			"beginCaptures": {
+				"0": {
+					"name": "keyword.control.directive.assert.asm.earasm"
+				}
+			},
+			"end": "$",
+			"patterns": [
+				{
+					"name": "",
+					"match": "\\s*(.*)\\s*(==|!=|<|<=|>|>=)\\s*(.*)\\s*",
+					"captures": {
+						"1": {
+							"patterns": [
+								{
+									"include": "#generic"
+								}
+							]
+						},
+						"2": {
+							"name": "keyword.operator.comparison.asm.earasm"
+						},
+						"3": {
+							"patterns": [
+								{
+									"include": "#generic"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"match": "\\b((?:ADD|SUB|MLU|MLS|DVU|DVS|XOR|AND|ORR|SHL|SRU|SRS|MOV|CMP|RDC|WRC|LDW|STW|LDB|STB|BRA|BRR|FCA|FCR|RDB|WRB|PSH|POP|INC|BPT|HLT|NOP|RET|DEC|NEG|INV|ADR|SWP|ADC|SBC)(?:[FNY]?))(?:\\.(EQ|ZR|NE|NZ|GT|LE|LT|CC|GE|CS|AL|NG|PS|BG|SE|SM|BE|OD|EV))?\\b",
+			"captures": {
+				"1": {
+					"name": "entity.name.tag.mnemonic.asm.earasm"
+				},
+				"2": {
+					"name": "entity.other.attribute.condition.asm.earasm"
+				}
+			}
+		},
+		{
+			"include": "#generic"
+		}
+	],
+	"repository": {
+		"generic": {
+			"patterns": [
+				{
+					"name": "comment.block.asm.earasm",
+					"begin": "/\\*",
+					"end": "\\*/"
+				},
+				{
+					"name": "comment.line.double-slash.asm.earasm",
+					"begin": "//",
+					"end": "$"
+				},
+				{
+					"name": "entity.name.function.preprocessor.auto.asm.earasm",
+					"match": "@([a-zA-Z0-9_\\.]+@|(?![a-zA-Z0-9_\\.]))"
+				},
+				{
+					"name": "entity.name.label.asm.earasm",
+					"begin": "@",
+					"end": "(:)|[^a-zA-Z0-9_@\\.]|$",
+					"endCaptures": {
+						"1": {
+							"name": "keyword.operator.asm.earasm"
+						}
+					},
+					"patterns": [
+						{
+							"name": "entity.name.function.label.local.asm.earasm",
+							"match": "\\.[a-zA-Z0-9_]((?:\\.?[a-zA-Z0-9_])*)"
+						},
+						{
+							"name": "entity.name.class.label.asm.earasm",
+							"match": "((?:\\.?[a-zA-Z0-9_])*)"
+						},
+						{
+							"name": "invalid.illegal.label.asm.earasm",
+							"match": ".+"
+						}
+					]
+				},
+				{
+					"name": "variable.other.constant.equate.asm.earasm",
+					"begin": "\\$",
+					"end": "[^a-zA-Z0-9_\\$\\.]|$",
+					"patterns": [
+						{
+							"name": "support.constant.property-value.equate.local.asm.earasm",
+							"match": "\\.[a-zA-Z0-9_\\$]((?:\\.?[a-zA-Z0-9_\\$])*)"
+						},
+						{
+							"name": "variable.other.constant.equate.asm.earasm",
+							"match": "((?:\\.?[a-zA-Z0-9_\\$])*)"
+						},
+						{
+							"name": "invalid.illegal.equate.asm.earasm",
+							"match": ".+"
+						}
+					]
+				},
+				{
+					"name": "string.quoted.double",
+					"begin": "\"",
+					"end": "\"",
+					"patterns": [
+						{
+							"name": "constant.character.escape.single.asm.earasm",
+							"match": "\\\\[\\\\\"0afvtrn]"
+						},
+						{
+							"name": "constant.character.escape.hex.asm.earasm",
+							"match": "\\\\x[0-9a-fA-F]{2}"
+						},
+						{
+							"name": "constant.character.escape.octal.asm.earasm",
+							"match": "\\\\[0-7]{3}"
+						},
+						{
+							"name": "constant.character.escape.unicode.asm.earasm",
+							"match": "\\\\u[0-9a-fA-F]{4}"
+						},
+						{
+							"name": "string.value.asm.earasm",
+							"match": "[^\"\\\\]+"
+						}
+					]
+				},
+				{
+					"name": "constant.character.asm.earasm",
+					"match": "'(?:[^'\\\\]|\\\\[\\\\'0afvtrn])'"
+				},
+				{
+					"name": "constant.numeric.asm.earasm",
+					"match": "[1-9]\\d*|0(?:x[a-fA-F0-9]+|b[01]+|o[0-7]+)?"
+				},
+				{
+					"name": "entity.name.variable.register.asm.earasm",
+					"match": "\\b(!?)(?:R[0-9]|R1[0-5]|A[0-5]|S[0-2]|FP|SP|PC|DPC|RA|RD|ZERO)\\b",
+					"captures": {
+						"1": {
+							"name": "keyword.other.operator.cross-reg.asm.earasm"
+						}
+					}
+				},
+				{
+					"name": "entity.name.variable.register.control.asm.earasm",
+					"match": "\\b(!?)(?:CR[0-9]|CR1[0-5]|CREG_DENY_[RW]|INSN_DENY_[01]|INSN_COUNT_(?:LO|HI)|EXEC_STATE_[01]|MEMBASE_[RWX]|EXC_INFO|EXC_ADDR|TIMER|INSN_ADDR|FLAGS)\\b",
+					"captures": {
+						"1": {
+							"name": "keyword.other.operator.cross-reg.asm.earasm"
+						}
+					}
+				},
+				{
+					"name": "keyword.operator.asm.earasm",
+					"match": "[-+*/%^&|~]|<<|>>"
+				},
+				{
+					"name": "invalid.illegal.asm.earasm",
+					"match": "==|!=|<|<=|>|>="
+				}
+			]
+		}
+	}
+}

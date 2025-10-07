@@ -1,0 +1,102 @@
+/*
+memset(A0: void* ptr, A1: char c, A2: int size)
+
+A3-A5, S0: int byte_pattern
+*/
+.scope
+.export @memset
+@memset:
+	// if(size == 0) return
+	MOV     A2, A2
+	RET.ZR
+	
+	PSH     {S0-S2, RA, RD}
+	
+	// if(!(dst & 1)) goto start_aligned;
+	AND     ZERO, A0, 1
+	BRR.ZR  @.start_aligned
+	
+	// Write first unaligned byte
+	// *dst++ = c; --size;
+	STB     [A0], A1
+	INC     A0
+	DEC     A2
+	
+	// end = dst + size;
+	// if(!(end & 1)) goto aligned;
+@.start_aligned:
+	ADD     A0, A2
+	AND     ZERO, A2, 1
+	BRR.ZR  @.aligned
+	
+	// Write last unaligned byte
+	// *--dst = c; --size
+	DEC     A0
+	STB     [A0], A1
+	DEC     A2
+	
+@.aligned:
+	// Build byte pattern in A3 as c:c
+	SHL     A3, A1, 8
+	ORR     A3, A1
+	
+	// Fast copy does 16 bytes at a time, skip if remaining size is smaller
+	CMP     A2, 16
+	BRR.LT  @.end
+	
+	// Ensure A3-A5, S0-S2, Ra, Rd (8 registers) all hold the byte pattern
+	MOV     A4, A3
+	MOV     A5, A3
+	MOV     S0, A3
+	MOV     S1, A3
+	MOV     S2, A3
+	MOV     RA, A3
+	MOV     RD, A3
+	
+	CMP     A2, 0x100
+	BRR.GE  @.copy_start
+	
+	// Need to copy < 0x100 bytes, so jump partway through the copy sequence.
+	// Each copy instruction is 4 bytes in size and copies 16 bytes.
+	// goto *(copy_end - size / 16 * 4)
+	SRU     A1, A2, 1
+	SUB     A1, @.copy_end
+	NEG     A1
+	
+	// Set 16 bytes per PSH instruction, with 16 PSH instructions (0x100 bytes total)
+@.copy_start:
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //00-0F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //10-1F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //20-2F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //30-3F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //40-4F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //50-5F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //60-6F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //70-7F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //80-8F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //90-9F
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //A0-AF
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //B0-BF
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //C0-CF
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //D0-DF
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //E0-EF
+	PSH     A0, {A3-A5, S0-S2, RA, RD}  //F0-FF
+@.copy_end:
+	
+	SUB     A2, 0x100
+	BRR.CC  @.copy_loop
+	
+@.end:
+	AND     A2, 0xFF
+	
+	// size is now < 16 and is guaranteed to be aligned
+	DEC     A2, 8
+	INC.CS  A2, 8
+	PSH.CC  A0, {A3-A5, S0}
+	DEC     A2, 4
+	INC.CS  A2, 4
+	PSH.CC  A0, {A3-A4}
+	MOV     A2, A2
+	PSH.NZ  A0, A2
+	
+	POP     {S0-S2, PC, DPC}

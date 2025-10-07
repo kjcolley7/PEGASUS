@@ -1,0 +1,11 @@
+.scope
+.export @sys_exit
+@sys_exit:
+	WRB     (0xE), !A0
+	
+	MOV     A0, @exit_msg
+	FCR     @panic
+
+.segment @ROMDATA
+@exit_msg:
+	.lestring "User program exited.\n"

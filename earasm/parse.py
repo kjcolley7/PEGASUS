@@ -1,31 +1,46 @@
+import sys
 import ply.yacc as yacc
 from .lex import tokens
 from .ast import *
 from .insns import *
 
+from typing import Optional
 
-def pick_binop(lhs, opstr, rhs):
-	return BINOP_MAP[opstr](lhs, rhs)
 
-def pick_unop(opstr, unop):
-	return UNOP_MAP[opstr](unop)
+def pick_binop(
+		lhs: Expr, opstr: str, rhs: Expr,
+		loc: Optional[Location] = None
+) -> BinExpr:
+	return BINOP_MAP[opstr](lhs, rhs, loc=loc)
 
-def pick_insn(mnemonic, cc):
-	try:
-		return INSN_MAP[mnemonic](cc, toggle_flags=False)
-	except KeyError:
+def pick_unop(
+		opstr: str, unop: Expr,
+		loc: Optional[Location] = None
+) -> UnExpr:
+	return UNOP_MAP[opstr](unop, loc=loc)
+
+def pick_insn(
+		mnemonic: str, cc: str,
+		loc: Optional[Location] = None
+) -> Instruction:
+	tf = False
+	wf = None
+	if len(mnemonic) == 4:
 		# Handle cases like "MOVF", "MOVY", "MOVN"
 		if mnemonic.endswith("F"):
-			return INSN_MAP[mnemonic[:-1]](cc, toggle_flags=True)
+			tf = True
 		elif mnemonic.endswith("Y"):
-			return INSN_MAP[mnemonic[:-1]](cc, write_flags=True)
+			wf = True
 		elif mnemonic.endswith("N"):
-			return INSN_MAP[mnemonic[:-1]](cc, write_flags=False)
+			wf = False
 		else:
 			raise
+		mnemonic = mnemonic[:-1]
+	
+	return INSN_MAP[mnemonic](cc, toggle_flags=tf, write_flags=wf, loc=loc)
 
-def make_precedence():
-	def str_assoc(assoc):
+def make_precedence() -> tuple[tuple]:
+	def str_assoc(assoc: int) -> str:
 		if assoc < 0:
 			return "left"
 		elif assoc > 0:
@@ -33,7 +48,7 @@ def make_precedence():
 		else:
 			return "nonassoc"
 	
-	prec_map = dict()
+	prec_map: dict[tuple[int, int], list[ExprOp]] = {}
 	for oper in OPERATORS:
 		key = (oper.PRECEDENCE, oper.ASSOC)
 		if key not in prec_map:
@@ -41,20 +56,49 @@ def make_precedence():
 		else:
 			prec_map[key].append(oper)
 	
-	result = []
+	result: list[tuple] = []
 	prec_order = sorted(prec_map.keys())[::-1]
 	for prec in prec_order:
 		result.append((str_assoc(prec[1]),) + tuple(x.TOKEN for x in prec_map[prec]))
 	
 	return tuple(result)
 
-precedence = make_precedence()
+precedence: tuple[tuple] = make_precedence()
 
 
-def error(line, msg):
-	errmsg = "Syntax Error on line %d: %s" % (line, msg)
-	print(errmsg)
-	raise SyntaxError(errmsg)
+def build_loc(
+		filename: str,
+		filedata: str,
+		lexpos: int,
+		lineno: int
+) -> Location:
+	line_start = filedata.rfind('\n', 0, lexpos) + 1
+	line_end = filedata.find('\n', line_start)
+	col = lexpos - line_start + 1
+	line = filedata[line_start:line_end]
+	return Location(filename, lineno, col, line)
+
+def token_location(t) -> Location:
+	return build_loc(
+		filename=t.lexer.filename,
+		filedata=t.lexer.lexdata,
+		lexpos=t.lexpos,
+		lineno=t.lineno
+	)
+
+def parser_location(p, i: int) -> Location:
+	return build_loc(
+		filename=p.lexer.filename,
+		filedata=p.lexer.lexdata,
+		lexpos=p.lexpos(i),
+		lineno=p.lineno(i)
+	)
+
+def error(t, msg: str):
+	sys.stderr.write(f"Syntax error: {msg}\n")
+	token_location(t).show(sys.stderr)
+	
+	t.lexer.had_error = True
 
 
 
@@ -68,7 +112,8 @@ def p_asmlist_single(p):
 
 def p_line(p):
 	'''line : labeldef
-	        | pinsn
+	        | equatedef
+	        | insn
 	        | directive
 	'''
 	p[0] = p[1]
@@ -83,19 +128,19 @@ def p_vallist_multiple(p):
 
 def p_dir_dw(p):
 	'''directive : DOTDW vallist'''
-	p[0] = DotDW(p[2])
+	p[0] = DotDW(p[2], loc=parser_location(p, 1))
 
 def p_dir_db_vallist(p):
 	'''directive : DOTDB vallist'''
-	p[0] = DotDB(p[2])
+	p[0] = DotDB(p[2], loc=parser_location(p, 1))
 
 def p_dir_db_string(p):
 	'''directive : DOTDB stringexpr'''
-	p[0] = DotDB([NumExpr(c) for c in p[2]])
+	p[0] = DotDB([NumExpr(c) for c in p[2]], loc=parser_location(p, 1))
 
 def p_dir_lestring(p):
 	'''directive : DOTLESTRING stringexpr'''
-	p[0] = DotLEString(p[2])
+	p[0] = DotLEString(p[2], loc=parser_location(p, 1))
 
 def p_stringexpr_single(p):
 	'''stringexpr : STRING'''
@@ -107,83 +152,157 @@ def p_stringexpr_multiple(p):
 
 def p_dir_loc(p):
 	'''directive : DOTLOC constexpr'''
-	p[0] = DotLoc(p[2])
+	p[0] = DotLoc(p[2], loc=parser_location(p, 1))
 
 def p_dir_align(p):
 	'''directive : DOTALIGN constexpr'''
-	p[0] = DotAlign(p[2])
+	p[0] = DotAlign(p[2], loc=parser_location(p, 1))
 
 def p_dir_loc_with_dpc(p):
 	'''directive : DOTLOC constexpr COMMA constexpr'''
-	p[0] = DotLoc(p[2], p[4])
+	p[0] = DotLoc(p[2], p[4], loc=parser_location(p, 1))
 
 def p_dir_segment(p):
 	'''directive : DOTSEGMENT labelref'''
-	p[0] = DotSegment("@" + p[2].name)
+	p[0] = DotSegment(p[2].name, loc=parser_location(p, 1))
 
 def p_dir_scope(p):
 	'''directive : DOTSCOPE'''
-	p[0] = DotScope()
+	p[0] = DotScope(loc=parser_location(p, 1))
 
 def p_dir_export(p):
 	'''directive : DOTEXPORT labelref'''
-	p[0] = DotExport(p[2])
+	p[0] = DotExport(p[2], loc=parser_location(p, 1))
 
 def p_dir_export_explicit(p):
 	'''directive : DOTEXPORT labelref COMMA stringexpr'''
-	p[0] = DotExport(p[2], p[4])
+	p[0] = DotExport(p[2], p[4], loc=parser_location(p, 1))
 
-def p_pinsn_insn(p):
-	'''pinsn : insn'''
+def p_dir_import(p):
+	'''directive : DOTIMPORT stringexpr'''
+	p[0] = DotImport(p[2], loc=parser_location(p, 1))
+
+def p_cmpop(p):
+	'''cmpop : EQEQ
+	         | BANGEQ
+	         | LESS
+	         | LESSEQ
+	         | GREATER
+	         | GREATEREQ
+	'''
 	p[0] = p[1]
+
+def p_dir_assert(p):
+	'''directive : DOTASSERT constexpr cmpop constexpr'''
+	p[0] = DotAssert(p[2], p[3], p[4], loc=parser_location(p, 1))
 
 def p_labeldef(p):
 	'''labeldef : LABEL COLON'''
-	p[0] = Label(p[1], None)
+	p[0] = Label(p[1], loc=parser_location(p, 1))
+
+def p_equatedef(p):
+	'''equatedef : EQUATE ASSIGN constexpr'''
+	p[0] = Equate(p[1], p[3], loc=parser_location(p, 1))
 
 # For optional production rules
 def p_empty(p):
 	'''empty :'''
 	pass
 
-# Exclude DPC, as that's not legal in Ry
 def p_ry(p):
-	'''ry : ZERO
-	      | A0
-	      | A1
-	      | A2
-	      | A3
-	      | A4
-	      | A5
-	      | S0
-	      | S1
-	      | S2
-	      | FP
-	      | SP
-	      | RA
-	      | RD
-	      | PC
+	'''ry : ry_normal
+	      | reg_cross
 	'''
-	p[0] = RegExpr(p[1])
+	p[0] = p[1]
+
+# Exclude DPC, as that's not legal in Ry
+def p_ry_normal(p):
+	'''ry_normal : ZERO
+	             | A0
+	             | A1
+	             | A2
+	             | A3
+	             | A4
+	             | A5
+	             | S0
+	             | S1
+	             | S2
+	             | FP
+	             | SP
+	             | RA
+	             | RD
+	             | PC
+	'''
+	p[0] = RegExpr(p[1], loc=parser_location(p, 1))
+
+def p_reg(p):
+	'''reg : reg_normal
+	       | reg_cross
+	'''
+	p[0] = p[1]
 
 def p_reg_ry(p):
-	'''reg : ry'''
+	'''reg_normal : ry_normal'''
 	p[0] = p[1]
 
 def p_reg_dpc(p):
-	'''reg : DPC'''
-	p[0] = RegExpr(p[1])
+	'''reg_normal : DPC'''
+	p[0] = RegExpr(p[1], loc=parser_location(p, 1))
+
+def p_reg_cross(p):
+	'''reg_cross : BANG reg_normal'''
+	p[0] = p[2].cross()
+
+def p_creg(p):
+	'''creg : creg_normal
+	        | creg_cross
+	'''
+	p[0] = p[1]
+
+def p_creg_normal(p):
+	'''creg_normal : CR0
+	               | CR1
+	               | CR2
+	               | CR3
+	               | CR4
+	               | CR5
+	               | CR6
+	               | CR7
+	               | CR8
+	               | CR9
+	               | CR10
+	               | CR11
+	               | CR12
+	               | CR13
+	               | CR14
+	               | CR15
+	'''
+	p[0] = CRegExpr(p[1], loc=parser_location(p, 1))
+
+def p_creg_cross(p):
+	'''creg_cross : BANG creg_normal'''
+	p[0] = p[2].cross()
 
 def p_constant_number(p):
 	'''constant : NUMBER'''
-	p[0] = NumExpr(p[1])
+	p[0] = NumExpr(p[1], loc=parser_location(p, 1))
+
+def p_symbolref(p):
+	'''symbolref : labelref
+	             | equateref
+	'''
+	p[0] = p[1]
 
 def p_labelref(p):
 	'''labelref : LABEL'''
-	p[0] = LabelExpr(p[1])
+	p[0] = SymbolExpr(p[1], loc=parser_location(p, 1))
 
-def p_constant_labelref(p):
-	'''constant : labelref'''
+def p_equateref(p):
+	'''equateref : EQUATE'''
+	p[0] = SymbolExpr(p[1], loc=parser_location(p, 1))
+
+def p_constant_symbolref(p):
+	'''constant : symbolref'''
 	p[0] = p[1]
 
 def p_constexpr_single(p):
@@ -206,18 +325,24 @@ def p_constexpr_binop(p):
 	             | constexpr CARAT constexpr
 	             | constexpr PIPE constexpr
 	'''
-	p[0] = pick_binop(*p[1:])
+	p[0] = pick_binop(*p[1:], loc=parser_location(p, 2))
 
 def p_constexpr_unop_pre(p):
 	'''constexpr : DASH constexpr %prec UMINUS
 	             | TILDE constexpr
 	'''
-	p[0] = pick_unop(*p[1:])
+	p[0] = pick_unop(*p[1:], loc=parser_location(p, 1))
 
 # Register (excluding DPC) or a constant value
 def p_vy(p):
-	'''vy : ry
-	      | constexpr
+	'''vy : vy_normal
+	      | reg_cross
+	'''
+	p[0] = p[1]
+
+def p_vy_normal(p):
+	'''vy_normal : ry_normal
+	             | constexpr
 	'''
 	p[0] = p[1]
 
@@ -230,6 +355,16 @@ def p_rdxy_rxy(p):
 def p_rdxy_rdxy(p):
 	'''rdxy : reg COMMA reg COMMA vy'''
 	p[0] = dict(Rd=p[1], Rx=p[3], Vy=p[5])
+
+# Rdx:Rd, Rx, Vy
+def p_rdxy_rddxy(p):
+	'''rdxy : reg COLON reg COMMA reg COMMA vy'''
+	if p[3].is_cross and not p[1].is_cross:
+		error(p[2], "Rdx and Rx can only both be cross or both be normal")
+		raise SyntaxError
+	if p[1].is_cross:
+		p[3].cross()
+	p[0] = dict(Rdx=p[1], Rd=p[3], Rx=p[5], Vy=p[7])
 
 # Condition code
 def p_cond(p):
@@ -276,6 +411,8 @@ def p_mnem(p):
 	   mn_srs : SRS cc
 	   mn_mov : MOV cc
 	   mn_cmp : CMP cc
+	   mn_rdc : RDC cc
+	   mn_wrc : WRC cc
 	   mn_ldw : LDW cc
 	   mn_stw : STW cc
 	   mn_ldb : LDB cc
@@ -301,7 +438,7 @@ def p_mnem(p):
 	   pmn_adc : ADC cc
 	   pmn_sbc : SBC cc
 	'''
-	p[0] = pick_insn(p[1], p[2])
+	p[0] = pick_insn(p[1], p[2], loc=parser_location(p, 1))
 
 # The standard instruction format: "INS [Rd,] Rx, Vy"
 def p_insn_rdxy(p):
@@ -314,13 +451,26 @@ def p_insn_rdxy(p):
 	        | mn_xor rdxy
 	        | mn_and rdxy
 	        | mn_orr rdxy
-	        | mn_shl rdxy
-	        | mn_sru rdxy
-	        | mn_srs rdxy
 	        | pmn_adc rdxy
 	        | pmn_sbc rdxy
 	'''
 	p[0] = p[1].set_operands(**p[2])
+
+# SHL/SRU/SRS Rx, V8
+def p_insn_shifts(p):
+	'''insn : mn_shl reg COMMA vy
+	        | mn_sru reg COMMA vy
+	        | mn_srs reg COMMA vy
+	'''
+	p[0] = p[1].set_operands(Rx=p[2], V8=p[4])
+
+# SHL/SRU/SRS Rd, Rx, V8
+def p_insn_shifts_rd(p):
+	'''insn : mn_shl reg COMMA reg COMMA vy
+	        | mn_sru reg COMMA reg COMMA vy
+	        | mn_srs reg COMMA reg COMMA vy
+	'''
+	p[0] = p[1].set_operands(Rd=p[2], Rx=p[4], V8=p[6])
 
 # MOV Rx, Vy
 def p_insn_mov(p):
@@ -332,6 +482,16 @@ def p_insn_cmp(p):
 	'''insn : mn_cmp reg COMMA vy'''
 	p[0] = p[1].set_operands(Rx=p[2], Vy=p[4])
 
+# RDC Rx, CReg
+def p_insn_rdc(p):
+	'''insn : mn_rdc reg COMMA creg'''
+	p[0] = p[1].set_operands(Rx=p[2], Vy=p[4])
+
+# WRC CReg, Ry
+def p_insn_wrc(p):
+	'''insn : mn_wrc creg COMMA reg'''
+	p[0] = p[1].set_operands(Rx=p[2], Vy=p[4])
+
 # LDW Rx, [Vy]
 # LDB Rx, [Vy]
 def p_insn_load(p):
@@ -340,15 +500,45 @@ def p_insn_load(p):
 	'''
 	p[0] = p[1].set_operands(Rx=p[2], Vy=p[5])
 
-# STW [Rx], Vy
-def p_insn_stw(p):
-	'''insn : mn_stw LBRACKET reg RBRACKET COMMA vy'''
-	p[0] = p[1].set_operands(Rx=p[3], Vy=p[6])
+# LDW Rx, [Rd + Vy]
+# LDB Rx, [Rd + Vy]
+def p_insn_load_rd(p):
+	'''insn : mn_ldw reg COMMA LBRACKET reg PLUS vy RBRACKET
+	        | mn_ldb reg COMMA LBRACKET reg PLUS vy RBRACKET
+	'''
+	p[0] = p[1].set_operands(Rd=p[5], Rx=p[2], Vy=p[7])
 
-# STB [Rx], V8
-def p_insn_stb(p):
-	'''insn : mn_stb LBRACKET reg RBRACKET COMMA vy'''
-	p[0] = p[1].set_operands(Rx=p[3], V8=p[6])
+# LDW Rx, [Rd - Expr]
+# LDB Rx, [Rd - Expr]
+def p_insn_load_rd_minus(p):
+	'''insn : mn_ldw reg COMMA LBRACKET reg DASH constexpr RBRACKET
+	        | mn_ldb reg COMMA LBRACKET reg DASH constexpr RBRACKET
+	'''
+	p[0] = p[1].set_operands(Rd=p[5], Rx=p[2], Vy=NegExpr(p[7], loc=parser_location(p, 6)))
+
+# STW [Vy], Rx
+# STB [Vy], Rx
+def p_insn_store(p):
+	'''insn : mn_stw LBRACKET vy RBRACKET COMMA reg
+	        | mn_stb LBRACKET vy RBRACKET COMMA reg
+	'''
+	p[0] = p[1].set_operands(Rx=p[6], Vy=p[3])
+
+# STW [Rd + Vy], Rx
+# STB [Rd + Vy], Rx
+def p_insn_store_rd(p):
+	'''insn : mn_stw LBRACKET reg PLUS vy RBRACKET COMMA reg
+	        | mn_stb LBRACKET reg PLUS vy RBRACKET COMMA reg
+	'''
+	p[0] = p[1].set_operands(Rd=p[3], Rx=p[8], Vy=p[5])
+
+# STW [Rd - Expr], Rx
+# STB [Rd - Expr], Rx
+def p_insn_store_rd_minus(p):
+	'''insn : mn_stw LBRACKET reg DASH constexpr RBRACKET COMMA reg
+	        | mn_stb LBRACKET reg DASH constexpr RBRACKET COMMA reg
+	'''
+	p[0] = p[1].set_operands(Rd=p[3], Rx=p[8], Vy=p[5])
 
 # BRA and FCA both have the same syntax, so group them together
 def p_mnem_bra_fca(p):
@@ -365,19 +555,19 @@ def p_mnem_brr_fcr(p):
 
 # BRA Rx, Vy
 # FCA Rx, Vy
-def p_insn_bra_fcar_explicit(p):
-	'''insn : mn_bra_fca reg COMMA vy'''
+def p_insn_bra_fca_explicit(p):
+	'''insn : mn_bra_fca reg_normal COMMA vy_normal'''
 	p[0] = p[1].set_operands(Rx=p[2], Vy=p[4])
 
 # BRA Vy
 # FCA Vy
 def p_insn_bra_fcar_implied(p):
-	'''insn : mn_bra_fca vy'''
+	'''insn : mn_bra_fca vy_normal'''
 	p[0] = p[1].set_operands(Vy=p[2])
 
 # BRR Label
 # FCR Label
-def p_insn_bra_fcr_label(p):
+def p_insn_brr_fcr_label(p):
 	'''insn : mn_brr_fcr labelref'''
 	p[0] = p[1].set_operands(Label=p[2])
 
@@ -395,13 +585,14 @@ def p_insn_wrb(p):
 	p[0] = p[1].set_operands(Port=p[3], V8=p[6])
 
 def p_regrange_multiple(p):
-	'''regrange : reg DASH reg'''
-	if p[3].num <= p[1].num:
-		error(p.lineno(1), "Register range high bound must be greater than low bound.")
-	p[0] = set([RegExpr(x) for x in range(p[1].num, p[3].num + 1)])
+	'''regrange : reg_normal DASH reg_normal'''
+	if p[3].num < p[1].num:
+		error(p[2], "Register range high bound can't be lower than low bound.")
+		raise SyntaxError
+	p[0] = set([RegExpr(x, loc=parser_location(p, 2)) for x in range(p[1].num, p[3].num + 1)])
 
 def p_regrange_single(p):
-	'''regrange : reg'''
+	'''regrange : reg_normal'''
 	p[0] = set([p[1]])
 
 def p_regrangelist_multiple(p):
@@ -412,9 +603,23 @@ def p_regrangelist_single(p):
 	'''regrangelist : regrange'''
 	p[0] = p[1]
 
-# Example: {R1-R4, R7}
 def p_regset(p):
-	'''regset : LBRACE regrangelist RBRACE'''
+	'''regset : regset_normal
+	          | regset_cross
+	'''
+	p[0] = p[1]
+
+# Example: {R1-R4, R7}
+def p_regset_normal(p):
+	'''regset_normal : LBRACE regrangelist RBRACE'''
+	p[0] = p[2]
+
+# Example: !{R1-R4, R7}
+def p_regset_cross(p):
+	'''regset_cross : BANG regset_normal'''
+	for r in p[2]:
+		assert not r.is_cross
+		r.cross()
 	p[0] = p[2]
 
 # PSH/POP {Regs16}
@@ -503,15 +708,16 @@ def p_insn_adr(p):
 
 # SWP Ra, Rb
 def p_pinsn_swp(p):
-	'''pinsn : pmn_swp ry COMMA ry'''
+	'''insn : pmn_swp ry COMMA ry'''
 	p[0] = p[1].set_operands(Ra=p[2], Rb=p[4])
 
 # Handle parser errors
 def p_error(p):
-	if p is not None:
-		error(p.lineno, "Unexpected token '%s' [%s]" % (p.value, p.type))
-	else:
-		raise SyntaxError("Premature end of file")
+	if not p:
+		print("Premature end of file")
+		raise SyntaxError
+	
+	error(p, "Unexpected token '%s' [%s]" % (p.value, p.type))
 
 
 # Build parser

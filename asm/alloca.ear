@@ -1,0 +1,7 @@
+.scope
+.export @alloca
+@alloca:
+	SUB     SP, A0
+	AND     SP, ~1
+	MOV     A0, SP
+	RET

@@ -1,0 +1,4 @@
+@start:
+	// Set up sentinel frame pointer
+	STW     [FP], FP
+	BRR     @main
